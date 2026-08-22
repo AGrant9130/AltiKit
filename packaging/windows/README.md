@@ -39,6 +39,14 @@ foreach ($name in $foldersToRemove) {
     }
 }
 
+# Each bundled browser's "resources\" dir (distinct from the top-level
+# resources.pak file) holds optional feature-specific payloads (e.g. the
+# reading-mode accessibility helper) - irrelevant here, safe to drop whole.
+$localBrowsersDir = Join-Path $pwDir "driver\package\.local-browsers"
+Get-ChildItem -Path $localBrowsersDir -Recurse -Directory -Filter "resources" | ForEach-Object {
+    Remove-Item -Path $_.FullName -Recurse -Force
+}
+
 pyinstaller --noconfirm --windowed --name VW3ALanguageUpdater --add-data "README.md;." vw3a_lang_updater.py
 ```
 
