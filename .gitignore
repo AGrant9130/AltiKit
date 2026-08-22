@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# This project's own runtime state (per-user, not shareable)
+# (also covers the real ~/.vw3a_lang_updater dir if ever created here)
+.vw3a_lang_updater/
+
+# Downloaded/extracted language packages - large, and re-downloadable
+Languages_for_VW3A1111*/
+Languages_for_VW3A1111*.zip
+
+# Build output
+build/
+dist/
+*.spec.bak
+installer_output/
+
+# Editor/OS cruft
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

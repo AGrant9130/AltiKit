@@ -1,0 +1,73 @@
+name: Build Windows installer
+
+# Push a tag like "v1.0.0" to build and publish a GitHub Release with the
+# installer attached. Can also be run manually (Actions tab -> Run
+# workflow) to build a test artifact without creating a release.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write  # needed to create a release and upload assets
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Install bundleable Chromium for Playwright
+        # PLAYWRIGHT_BROWSERS_PATH=0 makes `playwright install` place the
+        # browser inside the playwright package's own directory instead
+        # of the OS-wide cache dir, so PyInstaller's built-in playwright
+        # hook picks it up automatically as package data - no manual
+        # --add-data plumbing needed for the ~150MB of browser binaries.
+        run: playwright install chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: "0"
+
+      - name: Build with PyInstaller
+        run: pyinstaller --noconfirm --windowed --name VW3ALanguageUpdater --add-data "README.md;." vw3a_lang_updater.py
+
+      - name: Derive version from tag
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compile installer
+        shell: cmd
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\installer.iss'
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VW3ALanguageUpdater-Setup-${{ steps.version.outputs.version }}
+          path: installer_output\*.exe
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" installer_output/*.exe \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
