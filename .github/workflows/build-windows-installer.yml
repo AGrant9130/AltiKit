@@ -37,6 +37,22 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: "0"
 
+      - name: Trim unneeded Chromium locale files
+        # Chromium's locale .pak files (esp. the *_MASCULINE/_FEMININE/_NEUTER
+        # grammatical-gender variants) have long names sitting deep inside
+        # .local-browsers\...\locales\, which combined with the CI runner's
+        # already-long checkout path (D:\a\<repo>\<repo>\...) exceeds
+        # Windows' 260-char MAX_PATH and aborts the Inno Setup compile.
+        # We never render any of Chromium's own localized UI (this app only
+        # drives it headlessly to scrape/download a page), so it's safe to
+        # keep just en-US.pak and drop the rest - also shrinks the installer.
+        shell: pwsh
+        run: |
+          $pwDir = python -c "import playwright, os; print(os.path.dirname(playwright.__file__))"
+          Get-ChildItem -Path $pwDir -Recurse -Directory -Filter "locales" | ForEach-Object {
+            Get-ChildItem -Path $_.FullName -Filter "*.pak" | Where-Object { $_.Name -ne "en-US.pak" } | Remove-Item -Force
+          }
+
       - name: Build with PyInstaller
         run: pyinstaller --noconfirm --windowed --name VW3ALanguageUpdater --add-data "README.md;." vw3a_lang_updater.py
 

@@ -20,6 +20,15 @@ pip install -r requirements.txt pyinstaller
 $env:PLAYWRIGHT_BROWSERS_PATH = "0"
 playwright install chromium
 
+# Trim Chromium's non-English locale files - if your checkout path is
+# long enough, their deeply-nested names (e.g. zh-TW_MASCULINE.pak) can
+# exceed Windows' 260-char MAX_PATH and make Inno Setup fail to compile.
+# Harmless to remove since this app only drives Chromium headlessly.
+$pwDir = python -c "import playwright, os; print(os.path.dirname(playwright.__file__))"
+Get-ChildItem -Path $pwDir -Recurse -Directory -Filter "locales" | ForEach-Object {
+    Get-ChildItem -Path $_.FullName -Filter "*.pak" | Where-Object { $_.Name -ne "en-US.pak" } | Remove-Item -Force
+}
+
 pyinstaller --noconfirm --windowed --name VW3ALanguageUpdater --add-data "README.md;." vw3a_lang_updater.py
 ```
 
