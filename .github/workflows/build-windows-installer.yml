@@ -37,20 +37,31 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: "0"
 
-      - name: Trim unneeded Chromium locale files
-        # Chromium's locale .pak files (esp. the *_MASCULINE/_FEMININE/_NEUTER
-        # grammatical-gender variants) have long names sitting deep inside
-        # .local-browsers\...\locales\, which combined with the CI runner's
-        # already-long checkout path (D:\a\<repo>\<repo>\...) exceeds
-        # Windows' 260-char MAX_PATH and aborts the Inno Setup compile.
-        # We never render any of Chromium's own localized UI (this app only
-        # drives it headlessly to scrape/download a page), so it's safe to
-        # keep just en-US.pak and drop the rest - also shrinks the installer.
+      - name: Trim unneeded Chromium data files
+        # Several bundled Chromium files/folders have long, deeply-nested
+        # names (locale .pak files, ad-privacy attestation data, media
+        # preload data, isolated-web-app key data, CSS hyphenation
+        # dictionaries) that are irrelevant to headless automation but,
+        # combined with the CI runner's long checkout path
+        # (D:\a\<repo>\<repo>\...), can exceed Windows' 260-char MAX_PATH
+        # and abort the Inno Setup compile with "path not found" on
+        # whichever file happens to be the longest. None of this affects
+        # functionality since this app only drives Chromium headlessly to
+        # scrape/download a page - it never renders any browser UI/features
+        # that these files back. Trimming them also shrinks the installer.
         shell: pwsh
         run: |
           $pwDir = python -c "import playwright, os; print(os.path.dirname(playwright.__file__))"
+
           Get-ChildItem -Path $pwDir -Recurse -Directory -Filter "locales" | ForEach-Object {
             Get-ChildItem -Path $_.FullName -Filter "*.pak" | Where-Object { $_.Name -ne "en-US.pak" } | Remove-Item -Force
+          }
+
+          $foldersToRemove = "PrivacySandboxAttestationsPreloaded", "MEIPreload", "IwaKeyDistribution", "hyphen-data"
+          foreach ($name in $foldersToRemove) {
+            Get-ChildItem -Path $pwDir -Recurse -Directory -Filter $name | ForEach-Object {
+              Remove-Item -Path $_.FullName -Recurse -Force
+            }
           }
 
       - name: Build with PyInstaller
