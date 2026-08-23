@@ -512,6 +512,18 @@ def detect_candidate_drives() -> list[tuple[Path, bool]]:
     return results
 
 
+def find_connected_keypad_root() -> Path | None:
+    """Returns the first auto-detected drive that looks like the keypad,
+    or None if none is currently connected. A connected keypad is a
+    physical fact, not tied to any particular tab's UI state, so the
+    export tabs use this directly rather than needing to be told about
+    whatever's selected on the Update Keypad tab."""
+    for path, is_keypad in detect_candidate_drives():
+        if is_keypad:
+            return path
+    return None
+
+
 def apply_update(
     extract_dir: Path,
     selected_codes: list[str],
@@ -765,28 +777,36 @@ class EjectThread(QThread):
 
 
 class FileExportTab(QWidget):
-    """Generic "pick a source file, pick a destination folder, copy it
-    over" tab - used identically for exporting VFD configuration files
-    and screenshots saved on the keypad, just with different labels.
-    Deliberately just a plain file copy with no keypad-specific
-    filtering/location assumptions, since the exact folder/naming
-    convention Schneider uses for these on-device isn't documented
-    anywhere this app already relies on (unlike LANG/KPCONF) - point
-    "Select..." at wherever the file actually lives on the mounted
-    keypad drive."""
+    """"Pick a source file, pick a destination folder, copy it over" tab
+    for exporting VFD configuration files (DRVCONF) and screenshots
+    (PRTSCR) saved on the keypad. Auto-lists files found in that folder
+    on whichever drive currently looks like the connected keypad, with a
+    manual browse fallback for anything unusual (drive not auto-detected,
+    file living somewhere else, etc.)."""
 
-    def __init__(self, item_label: str):
+    def __init__(self, item_label: str, keypad_subfolder: str):
         super().__init__()
         self.item_label = item_label
+        self.keypad_subfolder = keypad_subfolder
         self.source_file: Path | None = None
         self.dest_folder: Path | None = None
 
         layout = QVBoxLayout(self)
 
         layout.addWidget(QLabel(f"1. Select the {item_label} to export:"))
-        self.select_file_btn = QPushButton(f"Select {item_label.title()}...")
-        self.select_file_btn.clicked.connect(self.on_select_file)
-        layout.addWidget(self.select_file_btn)
+        self.file_list = QListWidget()
+        self.file_list.itemClicked.connect(self.on_file_item_clicked)
+        layout.addWidget(self.file_list)
+
+        file_btn_row = QHBoxLayout()
+        self.refresh_btn = QPushButton("Refresh List")
+        self.refresh_btn.clicked.connect(self.refresh_file_list)
+        self.browse_btn = QPushButton("Browse Manually...")
+        self.browse_btn.clicked.connect(self.on_browse_file)
+        file_btn_row.addWidget(self.refresh_btn)
+        file_btn_row.addWidget(self.browse_btn)
+        layout.addLayout(file_btn_row)
+
         self.file_label = QLabel("No file selected")
         layout.addWidget(self.file_label)
 
@@ -804,7 +824,42 @@ class FileExportTab(QWidget):
 
         layout.addStretch(1)
 
-    def on_select_file(self):
+        self.refresh_file_list()
+
+    def refresh_file_list(self):
+        self.file_list.clear()
+        keypad_root = find_connected_keypad_root()
+        if keypad_root is None:
+            item = QListWidgetItem("No keypad detected - connect it, or use Browse Manually")
+            item.setFlags(Qt.NoItemFlags)
+            self.file_list.addItem(item)
+            return
+        folder = keypad_root / self.keypad_subfolder
+        if not folder.is_dir():
+            item = QListWidgetItem(f"No {self.keypad_subfolder} folder found on {keypad_root}")
+            item.setFlags(Qt.NoItemFlags)
+            self.file_list.addItem(item)
+            return
+        files = sorted((p for p in folder.iterdir() if p.is_file()), key=lambda p: p.name.lower())
+        if not files:
+            item = QListWidgetItem(f"No files found in {folder}")
+            item.setFlags(Qt.NoItemFlags)
+            self.file_list.addItem(item)
+            return
+        for f in files:
+            item = QListWidgetItem(f.name)
+            item.setData(Qt.UserRole, str(f))
+            self.file_list.addItem(item)
+
+    def on_file_item_clicked(self, item: QListWidgetItem):
+        path_str = item.data(Qt.UserRole)
+        if not path_str:
+            return
+        self.source_file = Path(path_str)
+        self.file_label.setText(str(self.source_file))
+        self._update_export_enabled()
+
+    def on_browse_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, f"Select the {self.item_label} to export")
         if not file_path:
             return
@@ -970,8 +1025,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.log_view, stretch=1)
 
         tabs.addTab(update_tab, "Update Keypad")
-        tabs.addTab(FileExportTab("configuration file"), "Export Config")
-        tabs.addTab(FileExportTab("screenshot"), "Export Screenshots")
+        tabs.addTab(FileExportTab("configuration file", "DRVCONF"), "Export Config")
+        tabs.addTab(FileExportTab("screenshot", "PRTSCR"), "Export Screenshots")
 
         self._populate_languages_from_cache()
         self.refresh_detected_drives()
