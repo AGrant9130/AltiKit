@@ -31,6 +31,7 @@ IMPORTANT / KNOWN LIMITATIONS (please read):
     cannot guarantee you selected the right drive.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -283,14 +284,50 @@ def check_for_update(current_version: str) -> dict:
     return {"status": "up_to_date", "latest_version": latest_tag}
 
 
+def _find_release_asset(assets: list[dict], name_matches) -> str | None:
+    """Returns the download URL of the first asset whose filename
+    satisfies name_matches(name), or None."""
+    for asset in assets:
+        name = asset.get("name", "")
+        if name_matches(name):
+            return asset.get("browser_download_url")
+    return None
+
+
 def _find_windows_installer_asset(assets: list[dict]) -> str | None:
     """Picks the AltiKit-Setup-*.exe asset's download URL out of a
     GitHub release's asset list, if present."""
-    for asset in assets:
-        name = asset.get("name", "")
-        if name.startswith("AltiKit-Setup-") and name.endswith(".exe"):
-            return asset.get("browser_download_url")
-    return None
+    return _find_release_asset(assets, lambda name: name.startswith("AltiKit-Setup-") and name.endswith(".exe"))
+
+
+def _find_windows_checksum_asset(assets: list[dict]) -> str | None:
+    """Picks the AltiKit-Setup-*.exe.sha256 asset's download URL, if
+    present - CI writes one alongside every installer build."""
+    return _find_release_asset(assets, lambda name: name.endswith(".exe.sha256"))
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _fetch_expected_checksum(url: str) -> str:
+    """Fetches a sha256sum-style checksum file ("<hex digest>  <filename>")
+    and returns just the hex digest."""
+    request = Request(url, headers={"User-Agent": "altikit"})
+    with urlopen(request, timeout=15) as response:
+        text = response.read().decode("utf-8", errors="replace").strip()
+    first_line = text.splitlines()[0] if text else ""
+    digest = first_line.split()[0] if first_line.split() else ""
+    if len(digest) != 64:
+        raise RuntimeError("Checksum file was empty or in an unexpected format.")
+    return digest.lower()
 
 
 def _download_file(url: str, dest_path: Path, log=lambda msg: None) -> None:
@@ -335,11 +372,23 @@ def perform_self_update(update_result: dict, log=lambda msg: None) -> None:
 
 
 def _self_update_windows(update_result: dict, log) -> None:
-    asset_url = _find_windows_installer_asset(update_result.get("assets", []))
+    assets = update_result.get("assets", [])
+    asset_url = _find_windows_installer_asset(assets)
     if not asset_url:
         raise RuntimeError(
             "Couldn't find a Windows installer in the latest release's files. "
             f"Check {update_result.get('url', 'the Releases page')} manually."
+        )
+    checksum_url = _find_windows_checksum_asset(assets)
+    if not checksum_url:
+        # Fail closed rather than silently skipping verification - an
+        # older release built before this feature existed, or a release
+        # someone edited by hand, shouldn't get a free pass to run
+        # unverified.
+        raise RuntimeError(
+            "This release has no checksum file to verify the download "
+            f"against - refusing to auto-install. Update manually from "
+            f"{update_result.get('url', 'the Releases page')} instead."
         )
 
     import tempfile
@@ -347,6 +396,19 @@ def _self_update_windows(update_result: dict, log) -> None:
     installer_path = Path(tempfile.gettempdir()) / installer_name
     log(f"Downloading {installer_name}...")
     _download_file(asset_url, installer_path, log=log)
+
+    log("Verifying checksum...")
+    expected_hash = _fetch_expected_checksum(checksum_url)
+    actual_hash = _sha256_file(installer_path)
+    if actual_hash != expected_hash:
+        installer_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            "Checksum mismatch - the downloaded installer doesn't match "
+            "what was published (could be a corrupted download or a "
+            "tampered file). Not running it. Try again, or update "
+            f"manually from {update_result.get('url', 'the Releases page')}."
+        )
+    log("Checksum verified.")
 
     log("Launching installer...")
     # Not silent - shows the normal install wizard, same as running it

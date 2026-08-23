@@ -99,11 +99,25 @@ jobs:
           APP_VERSION: ${{ steps.version.outputs.version }}
         run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\installer.iss'
 
+      - name: Generate SHA256 checksum
+        # Lets the app's self-update feature verify the downloaded
+        # installer wasn't corrupted/tampered with before running it
+        # (see _self_update_windows in altikit.py) - also
+        # sha256sum-compatible for anyone who wants to verify a manual
+        # download by hand.
+        shell: pwsh
+        run: |
+          $exe = Get-Item "installer_output\AltiKit-Setup-${{ steps.version.outputs.version }}.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 $exe.FullName).Hash.ToLower()
+          "$hash  $($exe.Name)" | Out-File -Encoding ascii "$($exe.FullName).sha256"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: AltiKit-Setup-${{ steps.version.outputs.version }}
-          path: installer_output\*.exe
+          path: |
+            installer_output\*.exe
+            installer_output\*.sha256
 
       - name: Publish GitHub Release
         if: github.ref_type == 'tag'
@@ -111,6 +125,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" installer_output/*.exe \
+          gh release create "${{ github.ref_name }}" installer_output/*.exe installer_output/*.sha256 \
             --title "${{ github.ref_name }}" \
             --generate-notes

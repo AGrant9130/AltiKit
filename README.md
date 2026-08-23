@@ -70,8 +70,12 @@ is out, it asks whether to download and install it now - say yes and
 it handles the rest itself:
 
 - **Windows** - downloads the new `AltiKit-Setup-*.exe` from the
-  release and launches it (the normal install wizard, not silent),
-  then closes itself so the upgrade can proceed in place.
+  release, verifies its SHA256 checksum against the `.sha256` file CI
+  publishes alongside it (refuses to run it - and refuses to auto-
+  install at all if a release has no checksum file - rather than
+  launching something that doesn't match what was actually built),
+  then launches it (the normal install wizard, not silent) and closes
+  itself so the upgrade can proceed in place.
 - **Linux/macOS** - only automatic for an actual git clone with no
   uncommitted local changes: runs `git pull`, re-syncs via
   `install.sh`, then restarts itself. If it's not a git checkout (e.g.
