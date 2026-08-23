@@ -225,3 +225,8 @@ one-off installer without tagging (or without releasing publicly), run
 the workflow manually from the Actions tab ("Run workflow") - it
 uploads the installer as a workflow artifact instead. See
 `packaging/windows/README.md` to build it locally instead.
+
+## License
+
+GPLv3 - see [LICENSE](LICENSE). This applies to the whole project,
+including every version released before this file was added.
