@@ -34,9 +34,9 @@ the point) is a bigger lift than it's worth right now. Running from
 source is quick instead, and this is the same either way:
 
 ```bash
-git clone https://github.com/AGrant9130/vw3aKeypadUpdater.git
+git clone https://github.com/AGrant9130/AltiKit.git
 # or download+extract the source zip from the Releases page instead
-cd keypadUpdater
+cd AltiKit
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt

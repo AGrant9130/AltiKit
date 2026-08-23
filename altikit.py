@@ -114,7 +114,7 @@ APP_VERSION = _VERSION_FILE.read_text().strip() if _VERSION_FILE.is_file() else 
 # unauthenticated releases API. Only works once the repo (or at least its
 # releases) is public: private repos 404 for anonymous requests, which is
 # handled as a plain "couldn't check" message rather than a crash.
-GITHUB_REPO = "AGrant9130/vw3aKeypadUpdater"
+GITHUB_REPO = "AGrant9130/AltiKit"
 GITHUB_RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 APP_DIR = Path.home() / ".altikit"

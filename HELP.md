@@ -57,4 +57,4 @@ screenshot back to the device isn't a real use case.
 ## More information
 
 Full documentation, source code, and issue reporting:
-[github.com/AGrant9130/vw3aKeypadUpdater](https://github.com/AGrant9130/vw3aKeypadUpdater)
+[github.com/AGrant9130/AltiKit](https://github.com/AGrant9130/AltiKit)
