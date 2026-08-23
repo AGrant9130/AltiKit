@@ -19,6 +19,14 @@ Latest" works immediately without any extra downloads.
 
 No admin rights are required - it installs to your own user profile.
 
+To get a newer version later, click the "?" button in the app, then
+"Check for Updates" - it'll offer to open the download page if one's
+available. This only works once this repo's releases are public
+(GitHub's unauthenticated API can't see private-repo releases); until
+then it'll just say it couldn't check. Running a newer installer over
+an existing install always upgrades in place - no need to uninstall
+first.
+
 ## Development setup
 
 For working on the code itself (Linux/macOS/Windows with a terminal):

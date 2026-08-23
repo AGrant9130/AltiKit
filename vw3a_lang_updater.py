@@ -37,7 +37,9 @@ import webbrowser
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
+from urllib.request import Request, urlopen
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QIcon
@@ -93,6 +95,16 @@ else:
     _APP_ROOT = Path(__file__).resolve().parent
     ICON_PATH = _APP_ROOT / "packaging" / "icon" / "icon-256.png"
 README_PATH = _APP_ROOT / "README.md"
+
+_VERSION_FILE = _APP_ROOT / "VERSION.txt"
+APP_VERSION = _VERSION_FILE.read_text().strip() if _VERSION_FILE.is_file() else "dev"
+
+# Used for the "Check for Updates" feature - queries GitHub's public,
+# unauthenticated releases API. Only works once the repo (or at least its
+# releases) is public: private repos 404 for anonymous requests, which is
+# handled as a plain "couldn't check" message rather than a crash.
+GITHUB_REPO = "AGrant9130/vw3aKeypadUpdater"
+GITHUB_RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 APP_DIR = Path.home() / ".vw3a_lang_updater"
 CACHE_DIR = APP_DIR / "downloads"
@@ -196,6 +208,60 @@ class LocalState:
 # --------------------------------------------------------------------------
 # Core logic (no GUI dependencies, so it's testable / reusable)
 # --------------------------------------------------------------------------
+
+
+def _parse_version(v: str) -> tuple[int, ...]:
+    """Turns "v1.2.3" (or "1.2.3", or with extra non-numeric suffixes
+    like "1.2.3-dev") into (1, 2, 3) for comparison. Non-numeric/missing
+    parts become 0 rather than raising, since tags aren't guaranteed to
+    be strict semver."""
+    v = v.strip().lstrip("vV")
+    parts = []
+    for piece in v.split("."):
+        digits = ""
+        for ch in piece:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
+def check_for_update(current_version: str) -> dict:
+    """Queries GitHub's public, unauthenticated releases API for the
+    latest release and compares it to current_version. Returns a dict
+    with a "status" key ("update_available" / "up_to_date" / "error")
+    plus supporting details - never raises, so the GUI can just branch
+    on status rather than handle exceptions from a background thread.
+    """
+    request = Request(
+        GITHUB_RELEASES_API,
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "vw3a-lang-updater"},
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as e:
+        if e.code == 404:
+            return {
+                "status": "error",
+                "message": "Couldn't check for updates - the release page isn't public yet.",
+            }
+        return {"status": "error", "message": f"Couldn't check for updates (HTTP {e.code})."}
+    except (URLError, TimeoutError, OSError) as e:
+        return {"status": "error", "message": f"Couldn't check for updates: {e}"}
+    except json.JSONDecodeError:
+        return {"status": "error", "message": "Couldn't check for updates: unexpected response from GitHub."}
+
+    latest_tag = data.get("tag_name")
+    release_url = data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases")
+    if not latest_tag:
+        return {"status": "error", "message": "Couldn't check for updates: no release found."}
+
+    if _parse_version(latest_tag) > _parse_version(current_version):
+        return {"status": "update_available", "latest_version": latest_tag, "url": release_url}
+    return {"status": "up_to_date", "latest_version": latest_tag}
 
 
 SE_HOMEPAGE = "https://www.se.com/us/en/"
@@ -630,6 +696,13 @@ def eject_drive(target_root: Path, log=lambda msg: None) -> None:
 # --------------------------------------------------------------------------
 
 
+class UpdateCheckThread(QThread):
+    finished_ok = Signal(dict)
+
+    def run(self):
+        self.finished_ok.emit(check_for_update(APP_VERSION))
+
+
 class BrowserFetchThread(QThread):
     log_msg = Signal(str)
     finished_ok = Signal(str, object)  # version, zip_path
@@ -951,6 +1024,15 @@ class MainWindow(QMainWindow):
         dialog.setWindowTitle("README")
         dialog.resize(700, 600)
         dialog_layout = QVBoxLayout(dialog)
+
+        version_row = QHBoxLayout()
+        version_row.addWidget(QLabel(f"Version: {APP_VERSION}"))
+        version_row.addStretch(1)
+        check_update_btn = QPushButton("Check for Updates")
+        check_update_btn.clicked.connect(lambda: self._check_for_update_clicked(dialog, check_update_btn))
+        version_row.addWidget(check_update_btn)
+        dialog_layout.addLayout(version_row)
+
         view = QTextEdit()
         view.setReadOnly(True)
         view.setMarkdown(text)
@@ -959,6 +1041,35 @@ class MainWindow(QMainWindow):
         close_btn.clicked.connect(dialog.accept)
         dialog_layout.addWidget(close_btn)
         dialog.exec()
+
+    def _check_for_update_clicked(self, dialog: QDialog, button: QPushButton):
+        button.setEnabled(False)
+        button.setText("Checking...")
+        self.update_check_thread = UpdateCheckThread()
+
+        def on_result(result: dict):
+            button.setEnabled(True)
+            button.setText("Check for Updates")
+            status = result.get("status")
+            if status == "update_available":
+                resp = QMessageBox.question(
+                    dialog, "Update available",
+                    f"A new version ({result['latest_version']}) is available "
+                    f"(you have {APP_VERSION}).\n\nOpen the download page?",
+                    QMessageBox.Yes | QMessageBox.No,
+                )
+                if resp == QMessageBox.Yes:
+                    webbrowser.open(result["url"])
+            elif status == "up_to_date":
+                QMessageBox.information(
+                    dialog, "Up to date",
+                    f"You're on the latest version ({result['latest_version']}).",
+                )
+            else:
+                QMessageBox.warning(dialog, "Check failed", result.get("message", "Unknown error"))
+
+        self.update_check_thread.finished_ok.connect(on_result)
+        self.update_check_thread.start()
 
     def on_open_page_clicked(self):
         webbrowser.open(SE_DOWNLOAD_PAGE)

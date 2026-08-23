@@ -47,7 +47,13 @@ Get-ChildItem -Path $localBrowsersDir -Recurse -Directory -Filter "resources" | 
     Remove-Item -Path $_.FullName -Recurse -Force
 }
 
-pyinstaller --noconfirm --windowed --name VW3ALanguageUpdater --icon packaging\icon\icon.ico --add-data "README.md;." --add-data "packaging\icon\icon-256.png;." vw3a_lang_updater.py
+# Optional: write a version the app can report/compare against for its
+# "Check for Updates" feature. Without this file, the app just reports
+# itself as "dev" and skips the comparison. CI always writes a real one
+# from the pushed tag.
+"v0.0.0-local" | Out-File -Encoding ascii VERSION.txt
+
+pyinstaller --noconfirm --windowed --name VW3ALanguageUpdater --icon packaging\icon\icon.ico --add-data "README.md;." --add-data "VERSION.txt;." --add-data "packaging\icon\icon-256.png;." vw3a_lang_updater.py
 ```
 
 That produces `dist\VW3ALanguageUpdater\VW3ALanguageUpdater.exe` - you

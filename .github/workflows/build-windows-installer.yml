@@ -74,9 +74,6 @@ jobs:
             Remove-Item -Path $_.FullName -Recurse -Force
           }
 
-      - name: Build with PyInstaller
-        run: pyinstaller --noconfirm --windowed --name VW3ALanguageUpdater --icon packaging\icon\icon.ico --add-data "README.md;." --add-data "packaging\icon\icon-256.png;." vw3a_lang_updater.py
-
       - name: Derive version from tag
         id: version
         shell: bash
@@ -86,6 +83,15 @@ jobs:
           else
             echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Write VERSION.txt
+        # Bundled into the exe so the running app can show its own version
+        # and compare it against GitHub's latest release for update checks.
+        shell: bash
+        run: echo "v${{ steps.version.outputs.version }}" > VERSION.txt
+
+      - name: Build with PyInstaller
+        run: pyinstaller --noconfirm --windowed --name VW3ALanguageUpdater --icon packaging\icon\icon.ico --add-data "README.md;." --add-data "VERSION.txt;." --add-data "packaging\icon\icon-256.png;." vw3a_lang_updater.py
 
       - name: Compile installer
         shell: cmd
