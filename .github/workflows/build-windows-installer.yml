@@ -91,7 +91,7 @@ jobs:
         run: echo "v${{ steps.version.outputs.version }}" > VERSION.txt
 
       - name: Build with PyInstaller
-        run: pyinstaller --noconfirm --windowed --name AltiKit --icon packaging\icon\icon.ico --add-data "README.md;." --add-data "VERSION.txt;." --add-data "packaging\icon\icon-256.png;." altikit.py
+        run: pyinstaller --noconfirm --windowed --name AltiKit --icon packaging\icon\icon.ico --add-data "README.md;." --add-data "HELP.md;." --add-data "VERSION.txt;." --add-data "packaging\icon\icon-256.png;." altikit.py
 
       - name: Compile installer
         shell: cmd

@@ -53,7 +53,7 @@ Get-ChildItem -Path $localBrowsersDir -Recurse -Directory -Filter "resources" | 
 # from the pushed tag.
 "v0.0.0-local" | Out-File -Encoding ascii VERSION.txt
 
-pyinstaller --noconfirm --windowed --name AltiKit --icon packaging\icon\icon.ico --add-data "README.md;." --add-data "VERSION.txt;." --add-data "packaging\icon\icon-256.png;." altikit.py
+pyinstaller --noconfirm --windowed --name AltiKit --icon packaging\icon\icon.ico --add-data "README.md;." --add-data "HELP.md;." --add-data "VERSION.txt;." --add-data "packaging\icon\icon-256.png;." altikit.py
 ```
 
 That produces `dist\AltiKit\AltiKit.exe` - you can run it directly to

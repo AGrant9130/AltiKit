@@ -10,7 +10,9 @@ Schneider's own `Readme_Languages_Update_for_VW3A1111.txt`: delete the
 `LANG` and `KPCONF` folders on the keypad and copy over the new ones,
 capped at the device's 10-language limit (plus fonts).
 
-## Installing on Windows (no command line needed)
+## Installing
+
+### Windows (no command line needed)
 
 Grab the latest `AltiKit-Setup-*.exe` from this repo's
 [Releases page](../../releases), run it, and follow the installer -
@@ -20,13 +22,67 @@ Latest" works immediately without any extra downloads.
 
 No admin rights are required - it installs to your own user profile.
 
-To get a newer version later, click "Check for Updates" (top-right,
-next to "?") - it'll offer to open the download page if one's
-available. This only works once this repo's releases are public
-(GitHub's unauthenticated API can't see private-repo releases); until
-then it'll just say it couldn't check. Running a newer installer over
-an existing install always upgrades in place - no need to uninstall
-first.
+Running a newer installer over an existing install always upgrades in
+place - no need to uninstall first.
+
+### Linux / macOS
+
+There's no packaged installer for these yet - building one properly
+(especially a *notarized* one for macOS, without which an unsigned
+`.app` just triggers Gatekeeper warnings on every launch, undermining
+the point) is a bigger lift than it's worth right now. Running from
+source is quick instead, and this is the same either way:
+
+```bash
+git clone https://github.com/AGrant9130/vw3aKeypadUpdater.git
+# or download+extract the source zip from the Releases page instead
+cd keypadUpdater
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+playwright install chromium     # one-time, downloads a headless browser (~150-300MB)
+python3 altikit.py
+```
+
+**Linux extras** - to launch without opening a terminal each time, use
+`./launch.sh` (resolves paths relative to itself; logs to
+`~/.altikit/launch.log` if something goes wrong on startup). To add an
+app-launcher entry, copy this to
+`~/.local/share/applications/altikit.desktop`, editing the two paths
+to match where you cloned the repo:
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=AltiKit
+Comment=Update language files, and export configs/screenshots, on a Schneider Electric VW3A1111/VW3A1121 keypad
+Exec=/path/to/keypadUpdater/launch.sh
+Icon=/path/to/keypadUpdater/packaging/icon/icon.svg
+Terminal=false
+Categories=Utility;
+```
+
+**macOS note** - the first time Playwright launches its downloaded
+Chromium, Gatekeeper may warn it's from an unidentified developer -
+that's Playwright's own binary, not this app itself; allow it via
+System Settings → Privacy & Security if it comes up.
+
+## Getting updates
+
+Click "Check for Updates" (top-right, next to "?") - it'll tell you if
+a newer version is out and offer to open the Releases page. This is
+plain Python (`urllib` + `webbrowser`), no OS-specific code, so it
+works the same on every platform. It only works once this repo's
+releases are public (GitHub's unauthenticated API can't see
+private-repo releases) - until then it'll just say it couldn't check.
+
+What "updating" means once you're there differs by platform:
+
+- **Windows** - download and run the new `AltiKit-Setup-*.exe`; it
+  upgrades your existing install in place, no uninstall needed.
+- **Linux/macOS** - `git pull` (if you cloned) or re-download the
+  source zip from that same release, then re-run
+  `pip install -r requirements.txt` in case dependencies changed.
 
 ## The three tabs
 
@@ -48,19 +104,12 @@ first.
 
 ## Development setup
 
-For working on the code itself (Linux/macOS/Windows with a terminal):
-
-```bash
-python3 -m venv venv
-source venv/bin/activate        # on Windows: venv\Scripts\activate
-pip install -r requirements.txt
-playwright install chromium     # one-time, downloads a headless browser (~150-300MB)
-python3 altikit.py
-```
-
-Tested with Python 3.12 / PySide6 6.x on Linux; should run unmodified
-on Windows and macOS since it uses only cross-platform APIs (Qt +
-`pathlib`/`shutil`/`webbrowser` + Playwright).
+Same steps as "Linux / macOS" above (on Windows, activate the venv
+with `venv\Scripts\activate` instead). Tested with Python 3.12 /
+PySide6 6.x on Linux; should run unmodified on Windows and macOS since
+it uses only cross-platform APIs (Qt + `pathlib`/`shutil`/`webbrowser`
++ Playwright). To build the Windows installer locally instead of via
+CI, see `packaging/windows/README.md`.
 
 **Why Playwright?** Schneider's download page (`se.com`) blocks plain
 Python HTTP requests (confirmed 403, even with full browser-matching

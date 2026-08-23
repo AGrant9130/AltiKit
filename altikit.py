@@ -52,7 +52,6 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
-    QDialog,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -64,6 +63,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QTabWidget,
+    QTextBrowser,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -102,6 +102,10 @@ else:
     _APP_ROOT = Path(__file__).resolve().parent
     ICON_PATH = _APP_ROOT / "packaging" / "icon" / "icon-256.png"
 README_PATH = _APP_ROOT / "README.md"
+# Deliberately separate from README.md: the in-app help is for people
+# already running the app (usage info + a link to the repo), not
+# install/build instructions they don't need at that point.
+HELP_PATH = _APP_ROOT / "HELP.md"
 
 _VERSION_FILE = _APP_ROOT / "VERSION.txt"
 APP_VERSION = _VERSION_FILE.read_text().strip() if _VERSION_FILE.is_file() else "dev"
@@ -1272,6 +1276,22 @@ class MainWindow(QMainWindow):
 
         tabs.addTab(FileExportTab("screenshot", "PRTSCR"), "Export Screenshots")
 
+        help_tab = QWidget()
+        help_layout = QVBoxLayout(help_tab)
+        help_layout.addWidget(QLabel(f"Version: {APP_VERSION}"))
+        help_view = QTextBrowser()
+        help_view.setReadOnly(True)
+        help_view.setOpenExternalLinks(True)
+        if HELP_PATH.is_file():
+            help_view.setMarkdown(HELP_PATH.read_text(encoding="utf-8"))
+        else:
+            help_view.setPlainText(f"Couldn't find HELP.md next to the script at {HELP_PATH}.")
+        help_layout.addWidget(help_view)
+        tabs.addTab(help_tab, "Help")
+
+        self.tabs = tabs
+        self.help_tab = help_tab
+
         self._populate_languages_from_cache()
         self.refresh_detected_drives()
 
@@ -1363,29 +1383,10 @@ class MainWindow(QMainWindow):
         )
 
     def on_help_clicked(self):
-        if not README_PATH.is_file():
-            QMessageBox.warning(
-                self, "README not found",
-                f"Couldn't find README.md next to the script at "
-                f"{README_PATH}."
-            )
-            return
-        text = README_PATH.read_text(encoding="utf-8")
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("README")
-        dialog.resize(700, 600)
-        dialog_layout = QVBoxLayout(dialog)
-        dialog_layout.addWidget(QLabel(f"Version: {APP_VERSION}"))
-
-        view = QTextEdit()
-        view.setReadOnly(True)
-        view.setMarkdown(text)
-        dialog_layout.addWidget(view)
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.accept)
-        dialog_layout.addWidget(close_btn)
-        dialog.exec()
+        # The "?" button's placement (tab-bar corner) stays put, but it
+        # now switches to the Help tab instead of opening a separate
+        # dialog/window.
+        self.tabs.setCurrentWidget(self.help_tab)
 
     def on_check_updates_clicked(self):
         self.check_update_btn.setEnabled(False)
