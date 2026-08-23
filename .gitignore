@@ -5,8 +5,8 @@ venv/
 .venv/
 
 # This project's own runtime state (per-user, not shareable)
-# (also covers the real ~/.vw3a_lang_updater dir if ever created here)
-.vw3a_lang_updater/
+# (also covers the real ~/.altikit dir if ever created here)
+.altikit/
 
 # Downloaded/extracted language packages - large, and re-downloadable
 Languages_for_VW3A1111*/

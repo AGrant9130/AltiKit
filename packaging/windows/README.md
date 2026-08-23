@@ -2,7 +2,7 @@
 
 Normally you don't need any of this - push a version tag (see the main
 README's "Releasing a new version" section) and GitHub Actions builds
-`VW3ALanguageUpdater-Setup-<version>.exe` for you automatically.
+`AltiKit-Setup-<version>.exe` for you automatically.
 
 This doc is for building it locally instead (e.g. to test a change
 before tagging a release). Run everything below **on Windows**
@@ -53,11 +53,11 @@ Get-ChildItem -Path $localBrowsersDir -Recurse -Directory -Filter "resources" | 
 # from the pushed tag.
 "v0.0.0-local" | Out-File -Encoding ascii VERSION.txt
 
-pyinstaller --noconfirm --windowed --name VW3ALanguageUpdater --icon packaging\icon\icon.ico --add-data "README.md;." --add-data "VERSION.txt;." --add-data "packaging\icon\icon-256.png;." vw3a_lang_updater.py
+pyinstaller --noconfirm --windowed --name AltiKit --icon packaging\icon\icon.ico --add-data "README.md;." --add-data "VERSION.txt;." --add-data "packaging\icon\icon-256.png;." altikit.py
 ```
 
-That produces `dist\VW3ALanguageUpdater\VW3ALanguageUpdater.exe` - you
-can run it directly to sanity-check it before building the installer.
+That produces `dist\AltiKit\AltiKit.exe` - you can run it directly to
+sanity-check it before building the installer.
 
 Then compile the installer with [Inno Setup](https://jrsoftware.org/isinfo.php)
 (free): install it, then either open `packaging\windows\installer.iss`

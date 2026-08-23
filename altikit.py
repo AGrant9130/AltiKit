@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-VW3A1111 / VW3A1121 Graphic Display Terminal - Language File Updater
+AltiKit - a utility for Schneider Electric VW3A1111 / VW3A1121 Graphic
+Display Terminal keypads.
 
-Checks Schneider Electric's public download page for the current language
-package version, downloads and extracts it, lets you pick which languages
-to install (device limit: 10 languages + fonts = 11 files), and copies
-them onto a keypad connected as a USB mass-storage drive.
+Update Keypad tab: checks Schneider Electric's public download page for
+the current language package version, downloads and extracts it, lets
+you pick which languages to install (device limit: 10 languages + fonts
+= 11 files), and copies them onto a keypad connected as a USB
+mass-storage drive.
+
+Export Config / Export Screenshots tabs: copy VFD configuration files
+(DRVCONF) or screenshots (PRTSCR) off the keypad to a folder of your
+choosing.
 
 IMPORTANT / KNOWN LIMITATIONS (please read):
   * Schneider does not publish an API or version feed for this package.
@@ -107,7 +113,7 @@ APP_VERSION = _VERSION_FILE.read_text().strip() if _VERSION_FILE.is_file() else 
 GITHUB_REPO = "AGrant9130/vw3aKeypadUpdater"
 GITHUB_RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
-APP_DIR = Path.home() / ".vw3a_lang_updater"
+APP_DIR = Path.home() / ".altikit"
 CACHE_DIR = APP_DIR / "downloads"
 STATE_FILE = APP_DIR / "state.json"
 MAX_LANGUAGES = 10  # device hard limit, not counting Fonts.ums
@@ -238,7 +244,7 @@ def check_for_update(current_version: str) -> dict:
     """
     request = Request(
         GITHUB_RELEASES_API,
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "vw3a-lang-updater"},
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "altikit"},
     )
     try:
         with urlopen(request, timeout=10) as response:
@@ -891,7 +897,7 @@ class FileExportTab(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("VW3A1111 / VW3A1121 Language File Updater")
+        self.setWindowTitle("AltiKit")
         self.resize(640, 640)
 
         self.state = LocalState.load()

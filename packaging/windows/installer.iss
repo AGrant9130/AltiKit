@@ -1,24 +1,27 @@
-; Inno Setup script for the VW3A1111/VW3A1121 Language File Updater.
-; Built by the "build-windows-installer" GitHub Actions workflow, which
-; runs PyInstaller first (producing dist\VW3ALanguageUpdater\) and then
-; compiles this script with ISCC.exe (bundled on GitHub's windows-latest
-; runners, so no extra install step is needed in CI).
+; Inno Setup script for AltiKit (Schneider Electric VW3A1111/VW3A1121
+; keypad utility). Built by the "build-windows-installer" GitHub Actions
+; workflow, which runs PyInstaller first (producing dist\AltiKit\) and
+; then compiles this script with ISCC.exe (bundled on GitHub's
+; windows-latest runners, so no extra install step is needed in CI).
 ;
 ; To build locally instead: run PyInstaller yourself first (see
 ; packaging/windows/README.md), then open this file in Inno Setup and
 ; click Compile - paths below are relative to this script's location.
 
-#define MyAppName "VW3A Language Updater"
+#define MyAppName "AltiKit"
 #define MyAppVersion GetEnv("APP_VERSION")
 #if MyAppVersion == ""
   #define MyAppVersion "0.0.0-dev"
 #endif
-#define MyAppExeName "VW3ALanguageUpdater.exe"
-#define MyDistDir "..\..\dist\VW3ALanguageUpdater"
+#define MyAppExeName "AltiKit.exe"
+#define MyDistDir "..\..\dist\AltiKit"
 
 [Setup]
 ; Fixed AppId so upgrades/reinstalls are recognized as the same app
-; rather than installing side-by-side.
+; rather than installing side-by-side. Deliberately unchanged from
+; before this app was renamed from "VW3A Language Updater" to AltiKit,
+; so anyone who already installed under the old name gets an in-place
+; upgrade here rather than a second, separate install.
 AppId={{26C4BA8A-A02F-4CD0-8E74-09F1BF701837}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
@@ -26,7 +29,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\..\installer_output
-OutputBaseFilename=VW3ALanguageUpdater-Setup-{#MyAppVersion}
+OutputBaseFilename=AltiKit-Setup-{#MyAppVersion}
 SetupIconFile=..\icon\icon.ico
 Compression=lzma
 SolidCompression=yes

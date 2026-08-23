@@ -1,17 +1,18 @@
-# VW3A1111 / VW3A1121 Language File Updater
+# AltiKit
 
-A small cross-platform GUI tool to check for, download, and install the
-latest language files onto a Schneider Electric VW3A1111 or VW3A1121
-Graphic Display Terminal.
+A small cross-platform GUI tool for Schneider Electric VW3A1111 /
+VW3A1121 Graphic Display Terminal keypads: check for, download, and
+install the latest language files; export VFD configuration files and
+screenshots saved on the keypad.
 
-It automates the manual procedure described in Schneider's own
-`Readme_Languages_Update_for_VW3A1111.txt`: delete the `LANG` and
-`KPCONF` folders on the keypad and copy over the new ones, capped at
-the device's 10-language limit (plus fonts).
+The language-update flow automates the manual procedure described in
+Schneider's own `Readme_Languages_Update_for_VW3A1111.txt`: delete the
+`LANG` and `KPCONF` folders on the keypad and copy over the new ones,
+capped at the device's 10-language limit (plus fonts).
 
 ## Installing on Windows (no command line needed)
 
-Grab the latest `VW3ALanguageUpdater-Setup-*.exe` from this repo's
+Grab the latest `AltiKit-Setup-*.exe` from this repo's
 [Releases page](../../releases), run it, and follow the installer -
 it adds a Start Menu entry and (optionally) a desktop shortcut. No
 Python, no terminal. Chromium is bundled in, so "Check && Download
@@ -47,7 +48,7 @@ python3 -m venv venv
 source venv/bin/activate        # on Windows: venv\Scripts\activate
 pip install -r requirements.txt
 playwright install chromium     # one-time, downloads a headless browser (~150-300MB)
-python3 vw3a_lang_updater.py
+python3 altikit.py
 ```
 
 Tested with Python 3.12 / PySide6 6.x on Linux; should run unmodified
@@ -63,7 +64,7 @@ headless Chromium, so it does. The `playwright install chromium` step
 downloads that browser once; after that it runs invisibly in the
 background whenever you click "Check && Download Latest."
 
-## Usage
+## Using the Update Keypad tab
 
 1. **Get the language package.** Three ways, in order of convenience:
    - **"Check && Download Latest (auto, via browser)"** - launches a
@@ -93,7 +94,7 @@ background whenever you click "Check && Download Latest."
    the app, or "Browse Manually..." for anything the scan misses.
 4. **Apply Update** — with "back up existing" checked (recommended, on
    by default), it copies your current `LANG`/`KPCONF` to
-   `~/.vw3a_lang_updater/backups/<drive-name>/` before deleting anything.
+   `~/.altikit/backups/<drive-name>/` before deleting anything.
    Once it finishes, an **"Eject Drive"** button appears - click it to
    safely unmount/eject the drive (via `udisksctl` on Linux, `diskutil`
    on macOS, or the Shell COM object on Windows), then reconnect the
@@ -110,14 +111,14 @@ reconfigure those separately.
   this package. The version comes from scraping `Version: Vx.xx` and
   the zip filename off the download page's HTML (via the headless
   browser) - if Schneider redesigns that page, `fetch_and_download_via_browser()`
-  in `vw3a_lang_updater.py` will need a small update to match.
+  in `altikit.py` will need a small update to match.
 - **Drive auto-detection is a convenience, not a guarantee.** It only
   scans conventional mount locations for your OS. If your setup mounts
   removable drives somewhere unusual, use "Browse Manually...". Either
   way, always confirm you've got the right drive before clicking Apply.
 - **Region.** The download page is the US regional one. Other se.com
   locales have sometimes lagged behind on version number historically.
-  Change `SE_DOWNLOAD_PAGE` near the top of `vw3a_lang_updater.py` if
+  Change `SE_DOWNLOAD_PAGE` near the top of `altikit.py` if
   you want a different region.
 - **Not an official Schneider integration** — it's automating public,
   manual steps.
@@ -160,7 +161,7 @@ git push origin v1.0.0
 ```
 
 That creates a GitHub Release named `v1.0.0` with
-`VW3ALanguageUpdater-Setup-1.0.0.exe` attached. To build/test a
+`AltiKit-Setup-1.0.0.exe` attached. To build/test a
 one-off installer without tagging (or without releasing publicly), run
 the workflow manually from the Actions tab ("Run workflow") - it
 uploads the installer as a workflow artifact instead. See
