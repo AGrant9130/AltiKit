@@ -27,6 +27,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\..\installer_output
 OutputBaseFilename=VW3ALanguageUpdater-Setup-{#MyAppVersion}
+SetupIconFile=..\icon\icon.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern

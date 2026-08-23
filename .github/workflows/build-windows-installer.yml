@@ -75,7 +75,7 @@ jobs:
           }
 
       - name: Build with PyInstaller
-        run: pyinstaller --noconfirm --windowed --name VW3ALanguageUpdater --add-data "README.md;." vw3a_lang_updater.py
+        run: pyinstaller --noconfirm --windowed --name VW3ALanguageUpdater --icon packaging\icon\icon.ico --add-data "README.md;." --add-data "packaging\icon\icon-256.png;." vw3a_lang_updater.py
 
       - name: Derive version from tag
         id: version

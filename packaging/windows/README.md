@@ -47,7 +47,7 @@ Get-ChildItem -Path $localBrowsersDir -Recurse -Directory -Filter "resources" | 
     Remove-Item -Path $_.FullName -Recurse -Force
 }
 
-pyinstaller --noconfirm --windowed --name VW3ALanguageUpdater --add-data "README.md;." vw3a_lang_updater.py
+pyinstaller --noconfirm --windowed --name VW3ALanguageUpdater --icon packaging\icon\icon.ico --add-data "README.md;." --add-data "packaging\icon\icon-256.png;." vw3a_lang_updater.py
 ```
 
 That produces `dist\VW3ALanguageUpdater\VW3ALanguageUpdater.exe` - you

@@ -40,6 +40,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -76,6 +77,9 @@ SE_DOWNLOAD_PAGE = "https://www.se.com/us/en/download/document/Languages_Drives_
 # itself. In dev/venv runs, sys.frozen isn't set.
 if getattr(sys, "frozen", False):
     _APP_ROOT = Path(sys._MEIPASS)
+    # icon-256.png is bundled flat (via --add-data ...;.) rather than
+    # under packaging/icon/ like in the source tree - see build docs.
+    ICON_PATH = _APP_ROOT / "icon-256.png"
     # Also make the bundled Playwright/Chromium (installed at build time
     # with PLAYWRIGHT_BROWSERS_PATH=0, so it lands inside the playwright
     # package itself and gets picked up by PyInstaller automatically)
@@ -85,6 +89,7 @@ if getattr(sys, "frozen", False):
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
 else:
     _APP_ROOT = Path(__file__).resolve().parent
+    ICON_PATH = _APP_ROOT / "packaging" / "icon" / "icon-256.png"
 README_PATH = _APP_ROOT / "README.md"
 
 APP_DIR = Path.home() / ".vw3a_lang_updater"
@@ -1130,6 +1135,8 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    if ICON_PATH.is_file():
+        app.setWindowIcon(QIcon(str(ICON_PATH)))
     if sys.platform == "win32":
         # Windows' native theme renders QProgressBar as a barely-different
         # shade of grey against the app's own grey background, making the
