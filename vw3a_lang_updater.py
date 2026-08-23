@@ -795,11 +795,12 @@ class MainWindow(QMainWindow):
         x = self.centralWidget().width() - self.help_btn.width() - 12
         y = box_top_left.y() + label_rect.bottom() - self.help_btn.height()
         if sys.platform == "win32":
-            # Windows' native group box style reserves a couple more
-            # pixels above the title text than the styles tested on Linux,
-            # so the same label_rect math sits a hair too high there and
-            # slightly overlaps the box border. Nudge down on Windows only.
-            y += 3
+            # Windows' native group box style's SC_GroupBoxLabel rect sits
+            # lower relative to the actual drawn title than on the Linux
+            # styles this was tuned against, so the base calculation lands
+            # the button too low (confirmed: the box border was cutting
+            # through the middle of the button). Move it up on Windows only.
+            y -= 8
         self.help_btn.move(x, y)
 
     def resizeEvent(self, event):
