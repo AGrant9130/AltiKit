@@ -41,7 +41,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -57,6 +57,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -763,6 +764,75 @@ class EjectThread(QThread):
             self.failed.emit(str(e))
 
 
+class FileExportTab(QWidget):
+    """Generic "pick a source file, pick a destination folder, copy it
+    over" tab - used identically for exporting VFD configuration files
+    and screenshots saved on the keypad, just with different labels.
+    Deliberately just a plain file copy with no keypad-specific
+    filtering/location assumptions, since the exact folder/naming
+    convention Schneider uses for these on-device isn't documented
+    anywhere this app already relies on (unlike LANG/KPCONF) - point
+    "Select..." at wherever the file actually lives on the mounted
+    keypad drive."""
+
+    def __init__(self, item_label: str):
+        super().__init__()
+        self.item_label = item_label
+        self.source_file: Path | None = None
+        self.dest_folder: Path | None = None
+
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel(f"1. Select the {item_label} to export:"))
+        self.select_file_btn = QPushButton(f"Select {item_label.title()}...")
+        self.select_file_btn.clicked.connect(self.on_select_file)
+        layout.addWidget(self.select_file_btn)
+        self.file_label = QLabel("No file selected")
+        layout.addWidget(self.file_label)
+
+        layout.addWidget(QLabel("2. Select the folder to export to:"))
+        self.select_folder_btn = QPushButton("Select Export Folder...")
+        self.select_folder_btn.clicked.connect(self.on_select_folder)
+        layout.addWidget(self.select_folder_btn)
+        self.folder_label = QLabel("No folder selected")
+        layout.addWidget(self.folder_label)
+
+        self.export_btn = QPushButton(f"Export {item_label.title()}")
+        self.export_btn.setEnabled(False)
+        self.export_btn.clicked.connect(self.on_export)
+        layout.addWidget(self.export_btn)
+
+        layout.addStretch(1)
+
+    def on_select_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, f"Select the {self.item_label} to export")
+        if not file_path:
+            return
+        self.source_file = Path(file_path)
+        self.file_label.setText(str(self.source_file))
+        self._update_export_enabled()
+
+    def on_select_folder(self):
+        directory = QFileDialog.getExistingDirectory(self, "Select the export folder")
+        if not directory:
+            return
+        self.dest_folder = Path(directory)
+        self.folder_label.setText(str(self.dest_folder))
+        self._update_export_enabled()
+
+    def _update_export_enabled(self):
+        self.export_btn.setEnabled(self.source_file is not None and self.dest_folder is not None)
+
+    def on_export(self):
+        dest_path = self.dest_folder / self.source_file.name
+        try:
+            shutil.copy2(self.source_file, dest_path)
+        except OSError as e:
+            QMessageBox.critical(self, "Export failed", str(e))
+            return
+        QMessageBox.information(self, "Export complete", f"Copied to {dest_path}")
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -773,16 +843,30 @@ class MainWindow(QMainWindow):
         self.extract_dir: Path | None = None
         self.target_dir: Path | None = None
 
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
-        # Extra top margin so the floating help button (see below) always
-        # has clear space above the "1. ..." box regardless of platform -
-        # trying to pixel-align it flush with the box's own border/title
-        # text turned out to need more headroom than some platforms'
-        # default margins leave, causing it to hit the window's title bar.
-        margins = layout.contentsMargins()
-        layout.setContentsMargins(margins.left(), 30, margins.right(), margins.bottom())
+        tabs = QTabWidget()
+        self.setCentralWidget(tabs)
+
+        # "?" and "Check for Updates" live in the tab bar's own corner
+        # widget, so they're aligned with the tab row by construction -
+        # Qt handles this natively, rather than the fragile manual pixel
+        # positioning this app used before switching to tabs (that needed
+        # per-platform tuning and still nearly hit the title bar on
+        # Windows - see git history if curious).
+        corner = QWidget()
+        corner_layout = QHBoxLayout(corner)
+        corner_layout.setContentsMargins(0, 0, 6, 0)
+        self.check_update_btn = QPushButton("Check for Updates")
+        self.check_update_btn.clicked.connect(self.on_check_updates_clicked)
+        corner_layout.addWidget(self.check_update_btn)
+        self.help_btn = QPushButton("?")
+        self.help_btn.setFixedSize(22, 22)
+        self.help_btn.setToolTip("View README")
+        self.help_btn.clicked.connect(self.on_help_clicked)
+        corner_layout.addWidget(self.help_btn)
+        tabs.setCornerWidget(corner, Qt.Corner.TopRightCorner)
+
+        update_tab = QWidget()
+        layout = QVBoxLayout(update_tab)
 
         # --- Update check group ---
         self.update_box = QGroupBox("1. Get the language package")
@@ -825,16 +909,6 @@ class MainWindow(QMainWindow):
         update_layout.addLayout(manual_row)
 
         layout.addWidget(update_box)
-
-        # Help button - floats over the top-right corner rather than living
-        # in the normal layout, so it can be aligned to the bottom of the
-        # "1. ..." title text (part of the group box's border, not
-        # something a regular layout row can align against).
-        self.help_btn = QPushButton("?", central)
-        self.help_btn.setFixedSize(22, 22)
-        self.help_btn.setToolTip("View README")
-        self.help_btn.clicked.connect(self.on_help_clicked)
-        self._position_help_button()
 
         # --- Language selection group ---
         lang_box = QGroupBox(f"2. Select languages to install (max {MAX_LANGUAGES}, plus fonts)")
@@ -895,35 +969,14 @@ class MainWindow(QMainWindow):
         self.log_view.setReadOnly(True)
         layout.addWidget(self.log_view, stretch=1)
 
+        tabs.addTab(update_tab, "Update Keypad")
+        tabs.addTab(FileExportTab("configuration file"), "Export Config")
+        tabs.addTab(FileExportTab("screenshot"), "Export Screenshots")
+
         self._populate_languages_from_cache()
         self.refresh_detected_drives()
-        # The initial help-button placement above runs before the layout is
-        # fully activated, so its geometry is stale; re-run once the event
-        # loop has processed the pending layout (a plain resizeEvent isn't
-        # guaranteed to fire if the window's final size already matches its
-        # size hint).
-        QTimer.singleShot(0, self._position_help_button)
 
     # -- helpers --------------------------------------------------------
-
-    def _position_help_button(self):
-        """Places the floating help button in the top-right corner, a
-        small fixed margin down from the window top. A previous version
-        tried to pixel-align its bottom edge with the "1. ..." box's own
-        border/title text using the style's reported label geometry, but
-        that geometry leaves different amounts of headroom per platform -
-        on Windows there wasn't enough room for the button's full height
-        without it poking into the title bar. A fixed offset (paired with
-        the extra top margin reserved on the main layout) is more robust
-        than chasing per-platform/style pixel offsets."""
-        x = self.centralWidget().width() - self.help_btn.width() - 12
-        y = 6
-        self.help_btn.move(x, y)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if hasattr(self, "help_btn"):
-            self._position_help_button()
 
     def log(self, msg: str):
         self.log_view.append(msg)
@@ -1024,14 +1077,7 @@ class MainWindow(QMainWindow):
         dialog.setWindowTitle("README")
         dialog.resize(700, 600)
         dialog_layout = QVBoxLayout(dialog)
-
-        version_row = QHBoxLayout()
-        version_row.addWidget(QLabel(f"Version: {APP_VERSION}"))
-        version_row.addStretch(1)
-        check_update_btn = QPushButton("Check for Updates")
-        check_update_btn.clicked.connect(lambda: self._check_for_update_clicked(dialog, check_update_btn))
-        version_row.addWidget(check_update_btn)
-        dialog_layout.addLayout(version_row)
+        dialog_layout.addWidget(QLabel(f"Version: {APP_VERSION}"))
 
         view = QTextEdit()
         view.setReadOnly(True)
@@ -1042,18 +1088,18 @@ class MainWindow(QMainWindow):
         dialog_layout.addWidget(close_btn)
         dialog.exec()
 
-    def _check_for_update_clicked(self, dialog: QDialog, button: QPushButton):
-        button.setEnabled(False)
-        button.setText("Checking...")
+    def on_check_updates_clicked(self):
+        self.check_update_btn.setEnabled(False)
+        self.check_update_btn.setText("Checking...")
         self.update_check_thread = UpdateCheckThread()
 
         def on_result(result: dict):
-            button.setEnabled(True)
-            button.setText("Check for Updates")
+            self.check_update_btn.setEnabled(True)
+            self.check_update_btn.setText("Check for Updates")
             status = result.get("status")
             if status == "update_available":
                 resp = QMessageBox.question(
-                    dialog, "Update available",
+                    self, "Update available",
                     f"A new version ({result['latest_version']}) is available "
                     f"(you have {APP_VERSION}).\n\nOpen the download page?",
                     QMessageBox.Yes | QMessageBox.No,
@@ -1062,11 +1108,11 @@ class MainWindow(QMainWindow):
                     webbrowser.open(result["url"])
             elif status == "up_to_date":
                 QMessageBox.information(
-                    dialog, "Up to date",
+                    self, "Up to date",
                     f"You're on the latest version ({result['latest_version']}).",
                 )
             else:
-                QMessageBox.warning(dialog, "Check failed", result.get("message", "Unknown error"))
+                QMessageBox.warning(self, "Check failed", result.get("message", "Unknown error"))
 
         self.update_check_thread.finished_ok.connect(on_result)
         self.update_check_thread.start()

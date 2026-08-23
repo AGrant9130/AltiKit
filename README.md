@@ -19,13 +19,24 @@ Latest" works immediately without any extra downloads.
 
 No admin rights are required - it installs to your own user profile.
 
-To get a newer version later, click the "?" button in the app, then
-"Check for Updates" - it'll offer to open the download page if one's
+To get a newer version later, click "Check for Updates" (top-right,
+next to "?") - it'll offer to open the download page if one's
 available. This only works once this repo's releases are public
 (GitHub's unauthenticated API can't see private-repo releases); until
 then it'll just say it couldn't check. Running a newer installer over
 an existing install always upgrades in place - no need to uninstall
 first.
+
+## The three tabs
+
+- **Update Keypad** - the language file update flow described below.
+- **Export Config** - pick a VFD configuration file saved on the
+  keypad and a destination folder, then copy it off. Just a plain file
+  copy (browse to wherever the file actually lives on the mounted
+  keypad drive) - there's no assumed folder/naming convention for
+  these like there is for `LANG`/`KPCONF`.
+- **Export Screenshots** - identical to Export Config, for screenshots
+  saved on the keypad instead.
 
 ## Development setup
 
