@@ -835,6 +835,16 @@ class FileExportTab(QWidget):
         self.delete_btn = QPushButton(f"Delete Selected {item_label.title()}(s)")
         self.delete_btn.setEnabled(False)
         self.delete_btn.clicked.connect(self.on_delete)
+        # Red for a destructive action, with a clearly muted disabled
+        # state so it doesn't read as "still clickable but red" - applied
+        # directly on the widget (not the platform-conditional app-level
+        # stylesheets elsewhere) since this should look the same everywhere.
+        self.delete_btn.setStyleSheet("""
+            QPushButton { background-color: #c0392b; color: white; }
+            QPushButton:hover:!disabled { background-color: #e74c3c; }
+            QPushButton:pressed:!disabled { background-color: #a93226; }
+            QPushButton:disabled { background-color: #7f8c8d; color: #dddddd; }
+        """)
         layout.addWidget(self.delete_btn)
 
         layout.addStretch(1)
