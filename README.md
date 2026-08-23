@@ -31,36 +31,21 @@ There's no packaged installer for these yet - building one properly
 (especially a *notarized* one for macOS, without which an unsigned
 `.app` just triggers Gatekeeper warnings on every launch, undermining
 the point) is a bigger lift than it's worth right now. Running from
-source is quick instead, and this is the same either way:
+source is quick instead, and `install.sh` handles the setup (venv,
+dependencies, Chromium, and - on Linux - an app-launcher entry) in one
+step, identically on both platforms:
 
 ```bash
 git clone https://github.com/AGrant9130/AltiKit.git
-# or download+extract the source zip from the Releases page instead
 cd AltiKit
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-playwright install chromium     # one-time, downloads a headless browser (~150-300MB)
-python3 altikit.py
+./install.sh
+./launch.sh
 ```
 
-**Linux extras** - to launch without opening a terminal each time, use
-`./launch.sh` (resolves paths relative to itself; logs to
-`~/.altikit/launch.log` if something goes wrong on startup). To add an
-app-launcher entry, copy this to
-`~/.local/share/applications/altikit.desktop`, editing the two paths
-to match where you cloned the repo:
-
-```ini
-[Desktop Entry]
-Type=Application
-Name=AltiKit
-Comment=Update language files, and export configs/screenshots, on a Schneider Electric VW3A1111/VW3A1121 keypad
-Exec=/path/to/keypadUpdater/launch.sh
-Icon=/path/to/keypadUpdater/packaging/icon/icon.svg
-Terminal=false
-Categories=Utility;
-```
+`install.sh` is safe to re-run any time (e.g. after pulling an update -
+every step skips cleanly if already done). `launch.sh` resolves paths
+relative to itself and logs to `~/.altikit/launch.log` if something
+goes wrong on startup.
 
 **macOS note** - the first time Playwright launches its downloaded
 Chromium, Gatekeeper may warn it's from an unidentified developer -
@@ -80,9 +65,10 @@ What "updating" means once you're there differs by platform:
 
 - **Windows** - download and run the new `AltiKit-Setup-*.exe`; it
   upgrades your existing install in place, no uninstall needed.
-- **Linux/macOS** - `git pull` (if you cloned) or re-download the
-  source zip from that same release, then re-run
-  `pip install -r requirements.txt` in case dependencies changed.
+- **Linux/macOS** - run `./update.sh` from your existing checkout - it
+  runs `git pull` (or tells you to re-download the source zip if you
+  didn't clone with git) and then re-syncs dependencies via
+  `install.sh` automatically.
 
 ## The three tabs
 
