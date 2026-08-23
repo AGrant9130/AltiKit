@@ -383,28 +383,41 @@ def detect_candidate_drives() -> list[tuple[Path, bool]]:
 
     if sys.platform.startswith("linux"):
         # /run/media and /media are where udisks2/systemd auto-mount
-        # actual removable media on hotplug - /base/<username>/<label> on
-        # most distros, /media/<label> directly on some. Deliberately not
-        # scanning /mnt: that's the traditional spot for manually-mounted
-        # arbitrary filesystems (dual-boot partitions, network shares,
-        # etc.), which isn't removable-media-specific and was showing up
-        # as irrelevant "candidate" clutter.
-        for base in (Path("/run/media"), Path("/media")):
-            if not base.is_dir():
-                continue
+        # actual removable media on hotplug. Deliberately not scanning
+        # /mnt: that's the traditional spot for manually-mounted arbitrary
+        # filesystems (dual-boot partitions, network shares, etc.), which
+        # isn't removable-media-specific and was showing up as irrelevant
+        # "candidate" clutter.
+        run_media = Path("/run/media")
+        if run_media.is_dir():
+            # Always /run/media/<username>/<label> - the username level
+            # itself is never a mount point, just a container directory,
+            # so only its children are real candidates.
             try:
-                for entry in base.iterdir():
-                    if not entry.is_dir():
+                for user_dir in run_media.iterdir():
+                    if not user_dir.is_dir():
                         continue
-                    candidates.add(entry)  # covers /media/<label> case
                     try:
-                        for sub in entry.iterdir():
-                            if sub.is_dir():
-                                candidates.add(sub)  # covers /base/<user>/<label>
+                        candidates.update(sub for sub in user_dir.iterdir() if sub.is_dir())
                     except PermissionError:
                         pass
             except PermissionError:
-                continue
+                pass
+        media = Path("/media")
+        if media.is_dir():
+            # Some distros mount directly at /media/<label>, others use
+            # /media/<username>/<label> - cover both.
+            try:
+                for entry in media.iterdir():
+                    if not entry.is_dir():
+                        continue
+                    candidates.add(entry)
+                    try:
+                        candidates.update(sub for sub in entry.iterdir() if sub.is_dir())
+                    except PermissionError:
+                        pass
+            except PermissionError:
+                pass
     elif sys.platform == "darwin":
         volumes = Path("/Volumes")
         if volumes.is_dir():
@@ -1176,6 +1189,30 @@ def main():
             }
             QProgressBar::chunk {
                 background-color: #3daee9;
+            }
+        """)
+    elif sys.platform.startswith("linux"):
+        # Some Linux desktop themes don't draw a visible border around
+        # QGroupBox (just the bold title), unlike Windows' native style.
+        # Add a theme-adaptive border - palette(light) tracks the current
+        # palette's color instead of a hardcoded one, so this still looks
+        # right in both light and dark themes - without changing anything
+        # else about the look. (palette(mid) was tried first but is not
+        # reliably distinct from the window background - confirmed some
+        # palettes define it *darker* than the background, making the
+        # border invisible; palette(light)/(dark) are the roles Qt's own
+        # styles use for guaranteed-visible bevel effects.)
+        app.setStyleSheet("""
+            QGroupBox {
+                border: 1px solid palette(light);
+                border-radius: 4px;
+                margin-top: 10px;
+                padding-top: 6px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 8px;
+                padding: 0 4px;
             }
         """)
     win = MainWindow()
