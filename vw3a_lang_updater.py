@@ -68,11 +68,14 @@ from PySide6.QtWidgets import (
 SE_DOWNLOAD_PAGE = "https://www.se.com/us/en/download/document/Languages_Drives_VW3A1111/"
 
 # When frozen by PyInstaller, __file__ resolves inside the bundle's
-# internal extraction dir, not next to the .exe - use sys.executable's
-# directory instead so README.md (placed alongside the exe by the
-# installer) is actually found. In dev/venv runs, sys.frozen isn't set.
+# internal extraction dir, not next to the .exe. sys._MEIPASS is
+# PyInstaller's own answer to "where are my bundled data files" - for
+# onedir builds (what we use) that's the _internal\ folder next to the
+# exe; using sys.executable's parent directly is wrong since PyInstaller
+# 6.x nests bundled data under _internal\ rather than next to the exe
+# itself. In dev/venv runs, sys.frozen isn't set.
 if getattr(sys, "frozen", False):
-    _APP_ROOT = Path(sys.executable).resolve().parent
+    _APP_ROOT = Path(sys._MEIPASS)
     # Also make the bundled Playwright/Chromium (installed at build time
     # with PLAYWRIGHT_BROWSERS_PATH=0, so it lands inside the playwright
     # package itself and gets picked up by PyInstaller automatically)
@@ -791,6 +794,12 @@ class MainWindow(QMainWindow):
         box_top_left = self.update_box.mapTo(self.centralWidget(), self.update_box.rect().topLeft())
         x = self.centralWidget().width() - self.help_btn.width() - 12
         y = box_top_left.y() + label_rect.bottom() - self.help_btn.height()
+        if sys.platform == "win32":
+            # Windows' native group box style reserves a couple more
+            # pixels above the title text than the styles tested on Linux,
+            # so the same label_rect math sits a hair too high there and
+            # slightly overlaps the box border. Nudge down on Windows only.
+            y += 3
         self.help_btn.move(x, y)
 
     def resizeEvent(self, event):
@@ -1120,6 +1129,25 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    if sys.platform == "win32":
+        # Windows' native theme renders QProgressBar as a barely-different
+        # shade of grey against the app's own grey background, making the
+        # two apply/eject progress bars hard to read - give just those a
+        # visible fill/border. Everything else keeps the native Windows
+        # look, and this is skipped entirely on Linux/macOS where the
+        # native style already has good contrast.
+        app.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #888888;
+                border-radius: 3px;
+                text-align: center;
+                background-color: #e0e0e0;
+                color: black;
+            }
+            QProgressBar::chunk {
+                background-color: #3daee9;
+            }
+        """)
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
