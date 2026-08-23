@@ -1040,15 +1040,18 @@ class KeypadImportSection(QWidget):
 
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel(f"1. Select the {item_label}(s) to import:"))
+        files_group = QGroupBox(f"1. Select the {item_label}(s) to import")
+        files_group_layout = QVBoxLayout(files_group)
         self.browse_btn = QPushButton(f"Browse for {item_label.title()}(s)...")
         self.browse_btn.clicked.connect(self.on_browse_files)
-        layout.addWidget(self.browse_btn)
+        files_group_layout.addWidget(self.browse_btn)
         self.files_label = QLabel("No files selected")
         self.files_label.setWordWrap(True)
-        layout.addWidget(self.files_label)
+        files_group_layout.addWidget(self.files_label)
+        layout.addWidget(files_group)
 
-        layout.addWidget(QLabel("2. Target on keypad:"))
+        target_group = QGroupBox("2. Target on keypad")
+        target_group_layout = QVBoxLayout(target_group)
         target_row = QHBoxLayout()
         self.target_label = QLabel("")
         self.target_label.setWordWrap(True)
@@ -1056,12 +1059,13 @@ class KeypadImportSection(QWidget):
         self.refresh_target_btn.clicked.connect(self.refresh_target)
         target_row.addWidget(self.target_label, stretch=1)
         target_row.addWidget(self.refresh_target_btn)
-        layout.addLayout(target_row)
+        target_group_layout.addLayout(target_row)
 
         self.import_btn = QPushButton(f"Import {item_label.title()}(s)")
         self.import_btn.setEnabled(False)
         self.import_btn.clicked.connect(self.on_import)
-        layout.addWidget(self.import_btn)
+        target_group_layout.addWidget(self.import_btn)
+        layout.addWidget(target_group)
 
         layout.addStretch(1)
 
