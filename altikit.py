@@ -806,7 +806,7 @@ class FileExportTab(QWidget):
 
         file_btn_row = QHBoxLayout()
         self.select_all_btn = QPushButton("Select All")
-        self.select_all_btn.clicked.connect(self.on_select_all)
+        self.select_all_btn.clicked.connect(self.on_select_all_toggle)
         self.refresh_btn = QPushButton("Refresh List")
         self.refresh_btn.clicked.connect(self.refresh_file_list)
         self.browse_btn = QPushButton("Browse Manually...")
@@ -881,14 +881,31 @@ class FileExportTab(QWidget):
         self.file_list.blockSignals(False)
         self.on_file_item_changed()
 
-    def on_select_all(self):
+    def _checkable_items(self) -> list[QListWidgetItem]:
+        return [
+            self.file_list.item(i)
+            for i in range(self.file_list.count())
+            if self.file_list.item(i).flags() & Qt.ItemIsUserCheckable
+        ]
+
+    def on_select_all_toggle(self):
+        items = self._checkable_items()
+        if not items:
+            return
+        # Toggle: if everything's already checked, this click means
+        # "select none" instead.
+        all_checked = all(item.checkState() == Qt.Checked for item in items)
+        new_state = Qt.Unchecked if all_checked else Qt.Checked
         self.file_list.blockSignals(True)
-        for i in range(self.file_list.count()):
-            item = self.file_list.item(i)
-            if item.flags() & Qt.ItemIsUserCheckable:
-                item.setCheckState(Qt.Checked)
+        for item in items:
+            item.setCheckState(new_state)
         self.file_list.blockSignals(False)
         self.on_file_item_changed()
+
+    def _update_select_all_button_text(self):
+        items = self._checkable_items()
+        all_checked = bool(items) and all(item.checkState() == Qt.Checked for item in items)
+        self.select_all_btn.setText("Select None" if all_checked else "Select All")
 
     def on_file_item_changed(self, _item=None):
         self.source_files = [
@@ -898,6 +915,7 @@ class FileExportTab(QWidget):
         ]
         self._update_file_label()
         self._update_buttons_enabled()
+        self._update_select_all_button_text()
 
     def on_browse_file(self):
         files, _ = QFileDialog.getOpenFileNames(self, f"Select the {self.item_label}(s) to export")
@@ -909,6 +927,7 @@ class FileExportTab(QWidget):
             if item.flags() & Qt.ItemIsUserCheckable:
                 item.setCheckState(Qt.Unchecked)
         self.file_list.blockSignals(False)
+        self._update_select_all_button_text()
         self.source_files = [Path(f) for f in files]
         self._update_file_label()
         self._update_buttons_enabled()
