@@ -65,6 +65,10 @@ from PySide6.QtWidgets import (
 # --------------------------------------------------------------------------
 
 SE_DOWNLOAD_PAGE = "https://www.se.com/us/en/download/document/Languages_Drives_VW3A1111/"
+# Approximate "Schneider Electric green" - a commonly-cited hex for their
+# brand color, not pulled from an official brand guideline doc. Swap this
+# if you have the exact value from Schneider's own brand kit.
+SCHNEIDER_GREEN = "#3DCD58"
 
 # When frozen by PyInstaller, __file__ resolves inside the bundle's
 # internal extraction dir, not next to the .exe. sys._MEIPASS is
@@ -1176,20 +1180,33 @@ def main():
         # Windows' native theme renders QProgressBar as a barely-different
         # shade of grey against the app's own grey background, making the
         # two apply/eject progress bars hard to read - give just those a
-        # visible fill/border. Everything else keeps the native Windows
-        # look, and this is skipped entirely on Linux/macOS where the
-        # native style already has good contrast.
-        app.setStyleSheet("""
-            QProgressBar {
+        # visible fill/border. Also adds a colored section-box border
+        # (Windows' native style doesn't draw one at all with any accent,
+        # unlike Linux's native style) using the same brand green as the
+        # progress bar fill, so the two match. Everything else keeps the
+        # native Windows look, and none of this runs on Linux/macOS.
+        app.setStyleSheet(f"""
+            QProgressBar {{
                 border: 1px solid #888888;
                 border-radius: 3px;
                 text-align: center;
                 background-color: #e0e0e0;
                 color: black;
-            }
-            QProgressBar::chunk {
-                background-color: #3daee9;
-            }
+            }}
+            QProgressBar::chunk {{
+                background-color: {SCHNEIDER_GREEN};
+            }}
+            QGroupBox {{
+                border: 1px solid {SCHNEIDER_GREEN};
+                border-radius: 4px;
+                margin-top: 10px;
+                padding-top: 6px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 8px;
+                padding: 0 4px;
+            }}
         """)
     elif sys.platform.startswith("linux"):
         # Some Linux desktop themes don't draw a visible border around
@@ -1203,6 +1220,10 @@ def main():
         # was tried first but isn't reliably distinct from the window
         # background - confirmed some palettes define it *darker* than
         # the background, making the border invisible.)
+        # Also rounds the two list "selection fields" and the log output
+        # field - Qt only actually rounds a widget's corners once it has
+        # an explicit border to apply the curve to (confirmed via a
+        # render test: border-radius alone left the frame square).
         app.setStyleSheet("""
             QGroupBox {
                 border: 1px solid palette(highlight);
@@ -1214,6 +1235,10 @@ def main():
                 subcontrol-origin: margin;
                 left: 8px;
                 padding: 0 4px;
+            }
+            QListWidget, QTextEdit {
+                border: 1px solid palette(light);
+                border-radius: 6px;
             }
         """)
     win = MainWindow()
