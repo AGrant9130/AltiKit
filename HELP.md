@@ -1,5 +1,11 @@
 # AltiKit Help
 
+**Not affiliated with Schneider Electric.** This is an independent
+hobby project that automates publicly documented manual steps - it is
+not an official Schneider Electric tool, and Schneider Electric
+doesn't support it. Please report bugs/issues via the GitHub repo
+linked below, not to Schneider Electric.
+
 A utility for Schneider Electric VW3A1111 / VW3A1121 Graphic Display
 Terminal keypads: update language files, and export/import VFD
 configuration files and screenshots saved on the keypad.
@@ -51,8 +57,6 @@ screenshot back to the device isn't a real use case.
   applying changes or deleting anything.
 - "Check for Updates" needs this project's GitHub releases to be
   public to work - if it says it couldn't check, that's likely why.
-- This is not an official Schneider tool/integration - it automates
-  publicly documented manual steps.
 
 ## More information
 

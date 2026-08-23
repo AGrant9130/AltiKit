@@ -200,6 +200,9 @@ class LocalState:
     zip_path: str = ""
     extracted_dir: str = ""
     selected_languages: list[str] = field(default_factory=lambda: ["en"])
+    config_export_dir: str = ""
+    screenshot_export_dir: str = ""
+    config_import_browse_dir: str = ""
 
     @classmethod
     def load(cls) -> "LocalState":
@@ -933,12 +936,21 @@ class FileExportTab(QWidget):
     keypad, with a manual browse fallback for anything unusual (drive
     not auto-detected, file living somewhere else, etc.)."""
 
-    def __init__(self, item_label: str, keypad_subfolder: str):
+    def __init__(self, item_label: str, keypad_subfolder: str, state: "LocalState | None" = None, state_attr: str = ""):
         super().__init__()
         self.item_label = item_label
         self.keypad_subfolder = keypad_subfolder
+        self.state = state
+        self.state_attr = state_attr
         self.source_files: list[Path] = []
+        # Restores the last-used export destination across app restarts,
+        # if one was saved and still exists (LocalState.save() is called
+        # whenever it changes, in on_select_folder below).
         self.dest_folder: Path | None = None
+        if self.state and self.state_attr:
+            saved_dir = getattr(self.state, self.state_attr, "")
+            if saved_dir and Path(saved_dir).is_dir():
+                self.dest_folder = Path(saved_dir)
 
         layout = QVBoxLayout(self)
 
@@ -970,7 +982,7 @@ class FileExportTab(QWidget):
         self.select_folder_btn = QPushButton("Select Export Folder...")
         self.select_folder_btn.clicked.connect(self.on_select_folder)
         folder_group_layout.addWidget(self.select_folder_btn)
-        self.folder_label = QLabel("No folder selected")
+        self.folder_label = QLabel(str(self.dest_folder) if self.dest_folder else "No folder selected")
         folder_group_layout.addWidget(self.folder_label)
 
         self.export_btn = QPushButton(f"Export {item_label.title()}(s)")
@@ -1096,6 +1108,9 @@ class FileExportTab(QWidget):
             return
         self.dest_folder = Path(directory)
         self.folder_label.setText(str(self.dest_folder))
+        if self.state and self.state_attr:
+            setattr(self.state, self.state_attr, str(self.dest_folder))
+            self.state.save()
         self._update_buttons_enabled()
 
     def _update_buttons_enabled(self):
@@ -1170,10 +1185,12 @@ class KeypadImportSection(QWidget):
     doesn't make sense for screenshots, so this isn't reused for the
     Export Screenshots tab the way FileExportTab is."""
 
-    def __init__(self, item_label: str, keypad_subfolder: str):
+    def __init__(self, item_label: str, keypad_subfolder: str, state: "LocalState | None" = None, state_attr: str = ""):
         super().__init__()
         self.item_label = item_label
         self.keypad_subfolder = keypad_subfolder
+        self.state = state
+        self.state_attr = state_attr
         self.source_files: list[Path] = []
         self.target_folder: Path | None = None
 
@@ -1221,7 +1238,12 @@ class KeypadImportSection(QWidget):
         self._update_import_enabled()
 
     def on_browse_files(self):
-        files, _ = QFileDialog.getOpenFileNames(self, f"Select {self.item_label}(s) to import")
+        start_dir = ""
+        if self.state and self.state_attr:
+            start_dir = getattr(self.state, self.state_attr, "")
+        files, _ = QFileDialog.getOpenFileNames(
+            self, f"Select {self.item_label}(s) to import", start_dir,
+        )
         if not files:
             return
         self.source_files = [Path(f) for f in files]
@@ -1232,6 +1254,11 @@ class KeypadImportSection(QWidget):
                 f"{len(self.source_files)} files selected:\n"
                 + "\n".join(p.name for p in self.source_files)
             )
+        # Remembers where you last picked files from, so the dialog
+        # opens there again next time instead of some OS default.
+        if self.state and self.state_attr:
+            setattr(self.state, self.state_attr, str(self.source_files[0].parent))
+            self.state.save()
         self._update_import_enabled()
 
     def _update_import_enabled(self):
@@ -1413,15 +1440,22 @@ class MainWindow(QMainWindow):
         config_layout = QVBoxLayout(config_tab)
         export_group = QGroupBox("Export from Keypad")
         export_group_layout = QVBoxLayout(export_group)
-        export_group_layout.addWidget(FileExportTab("configuration file", "DRVCONF"))
+        export_group_layout.addWidget(
+            FileExportTab("configuration file", "DRVCONF", self.state, "config_export_dir")
+        )
         config_layout.addWidget(export_group)
         import_group = QGroupBox("Import to Keypad")
         import_group_layout = QVBoxLayout(import_group)
-        import_group_layout.addWidget(KeypadImportSection("configuration file", "DRVCONF"))
+        import_group_layout.addWidget(
+            KeypadImportSection("configuration file", "DRVCONF", self.state, "config_import_browse_dir")
+        )
         config_layout.addWidget(import_group)
         tabs.addTab(config_tab, "Config Files")
 
-        tabs.addTab(FileExportTab("screenshot", "PRTSCR"), "Export Screenshots")
+        tabs.addTab(
+            FileExportTab("screenshot", "PRTSCR", self.state, "screenshot_export_dir"),
+            "Export Screenshots",
+        )
 
         help_tab = QWidget()
         help_layout = QVBoxLayout(help_tab)

@@ -1,5 +1,11 @@
 # AltiKit
 
+> **Not affiliated with Schneider Electric.** This is an independent
+> hobby project that automates publicly documented manual steps - it
+> is not an official Schneider Electric tool, and Schneider Electric
+> doesn't support it. Please report bugs/issues via
+> [this repo's Issues page](../../issues), not to Schneider Electric.
+
 A small cross-platform GUI tool for Schneider Electric VW3A1111 /
 VW3A1121 Graphic Display Terminal keypads: check for, download, and
 install the latest language files; export VFD configuration files and
@@ -41,6 +47,11 @@ cd AltiKit
 ./install.sh
 ./launch.sh
 ```
+
+Clone it somewhere you plan to leave it (e.g. `~/Applications/AltiKit`
+or `~/Documents/AltiKit`) - `install.sh` writes the desktop
+shortcut/launcher with the path it was run from baked in, so moving
+the folder afterward means re-running `install.sh` to fix that path.
 
 `install.sh` is safe to re-run any time (e.g. after pulling an update -
 every step skips cleanly if already done). `launch.sh` resolves paths
@@ -166,8 +177,6 @@ reconfigure those separately.
   locales have sometimes lagged behind on version number historically.
   Change `SE_DOWNLOAD_PAGE` near the top of `altikit.py` if
   you want a different region.
-- **Not an official Schneider integration** — it's automating public,
-  manual steps.
 - If you rename a downloaded zip (or your own extracted folder) so it
   no longer matches Schneider's naming pattern, the app can't parse a
   version number from it anymore and will log a warning and record the
