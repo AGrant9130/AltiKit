@@ -50,7 +50,6 @@ from urllib.request import Request, urlopen
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
     QCheckBox,
     QDialog,
@@ -800,15 +799,14 @@ class FileExportTab(QWidget):
 
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel(f"1. Select the {item_label}(s) to export:"))
+        layout.addWidget(QLabel(f"1. Check the {item_label}(s) to export:"))
         self.file_list = QListWidget()
-        self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.file_list.itemSelectionChanged.connect(self.on_file_selection_changed)
+        self.file_list.itemChanged.connect(self.on_file_item_changed)
         layout.addWidget(self.file_list)
 
         file_btn_row = QHBoxLayout()
         self.select_all_btn = QPushButton("Select All")
-        self.select_all_btn.clicked.connect(self.file_list.selectAll)
+        self.select_all_btn.clicked.connect(self.on_select_all)
         self.refresh_btn = QPushButton("Refresh List")
         self.refresh_btn.clicked.connect(self.refresh_file_list)
         self.browse_btn = QPushButton("Browse Manually...")
@@ -839,35 +837,49 @@ class FileExportTab(QWidget):
         self.refresh_file_list()
 
     def refresh_file_list(self):
+        self.file_list.blockSignals(True)
         self.file_list.clear()
         keypad_root = find_connected_keypad_root()
         if keypad_root is None:
             item = QListWidgetItem("No keypad detected - connect it, or use Browse Manually")
             item.setFlags(Qt.NoItemFlags)
             self.file_list.addItem(item)
-            return
-        folder = keypad_root / self.keypad_subfolder
-        if not folder.is_dir():
-            item = QListWidgetItem(f"No {self.keypad_subfolder} folder found on {keypad_root}")
-            item.setFlags(Qt.NoItemFlags)
-            self.file_list.addItem(item)
-            return
-        files = sorted((p for p in folder.iterdir() if p.is_file()), key=lambda p: p.name.lower())
-        if not files:
-            item = QListWidgetItem(f"No files found in {folder}")
-            item.setFlags(Qt.NoItemFlags)
-            self.file_list.addItem(item)
-            return
-        for f in files:
-            item = QListWidgetItem(f.name)
-            item.setData(Qt.UserRole, str(f))
-            self.file_list.addItem(item)
+        else:
+            folder = keypad_root / self.keypad_subfolder
+            if not folder.is_dir():
+                item = QListWidgetItem(f"No {self.keypad_subfolder} folder found on {keypad_root}")
+                item.setFlags(Qt.NoItemFlags)
+                self.file_list.addItem(item)
+            else:
+                files = sorted((p for p in folder.iterdir() if p.is_file()), key=lambda p: p.name.lower())
+                if not files:
+                    item = QListWidgetItem(f"No files found in {folder}")
+                    item.setFlags(Qt.NoItemFlags)
+                    self.file_list.addItem(item)
+                else:
+                    for f in files:
+                        item = QListWidgetItem(f.name)
+                        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                        item.setCheckState(Qt.Unchecked)
+                        item.setData(Qt.UserRole, str(f))
+                        self.file_list.addItem(item)
+        self.file_list.blockSignals(False)
+        self.on_file_item_changed()
 
-    def on_file_selection_changed(self):
+    def on_select_all(self):
+        self.file_list.blockSignals(True)
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            if item.flags() & Qt.ItemIsUserCheckable:
+                item.setCheckState(Qt.Checked)
+        self.file_list.blockSignals(False)
+        self.on_file_item_changed()
+
+    def on_file_item_changed(self, _item=None):
         self.source_files = [
-            Path(item.data(Qt.UserRole))
-            for item in self.file_list.selectedItems()
-            if item.data(Qt.UserRole)
+            Path(self.file_list.item(i).data(Qt.UserRole))
+            for i in range(self.file_list.count())
+            if self.file_list.item(i).checkState() == Qt.Checked
         ]
         self._update_file_label()
         self._update_export_enabled()
@@ -876,7 +888,12 @@ class FileExportTab(QWidget):
         files, _ = QFileDialog.getOpenFileNames(self, f"Select the {self.item_label}(s) to export")
         if not files:
             return
-        self.file_list.clearSelection()
+        self.file_list.blockSignals(True)
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            if item.flags() & Qt.ItemIsUserCheckable:
+                item.setCheckState(Qt.Unchecked)
+        self.file_list.blockSignals(False)
         self.source_files = [Path(f) for f in files]
         self._update_file_label()
         self._update_export_enabled()
