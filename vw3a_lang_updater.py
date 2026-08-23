@@ -349,31 +349,6 @@ def looks_like_keypad_drive(path: Path) -> bool:
         return False
 
 
-def _linux_mount_is_removable(mount_path: Path) -> bool:
-    """Checks the kernel's own "removable" flag for the block device
-    backing a mount point, so things like a manually-mounted internal
-    partition under /mnt (e.g. a dual-boot Windows partition) don't get
-    offered as a "candidate" keypad location alongside actual USB drives."""
-    try:
-        device = subprocess.run(
-            ["findmnt", "-no", "SOURCE", str(mount_path)],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return False
-    if not device.startswith("/dev/"):
-        return False
-    partition_name = device.removeprefix("/dev/")
-    try:
-        # A partition's sysfs entry is a subdirectory of its whole-disk
-        # device's entry (e.g. .../block/sdb/sdb1) - the "removable" flag
-        # lives on the whole-disk entry, one level up.
-        removable_file = (Path("/sys/class/block") / partition_name).resolve().parent / "removable"
-        return removable_file.read_text().strip() == "1"
-    except OSError:
-        return False
-
-
 def detect_candidate_drives() -> list[tuple[Path, bool]]:
     """Scans typical removable-media mount points for the current OS and
     returns (path, looks_like_keypad) tuples, so the GUI can offer a
@@ -387,9 +362,13 @@ def detect_candidate_drives() -> list[tuple[Path, bool]]:
     candidates: set[Path] = set()
 
     if sys.platform.startswith("linux"):
-        # /run/media and /media are typically /base/<username>/<label>,
-        # but some distros mount directly at /media/<label>. /mnt is
-        # typically a single level, /mnt/<label>.
+        # /run/media and /media are where udisks2/systemd auto-mount
+        # actual removable media on hotplug - /base/<username>/<label> on
+        # most distros, /media/<label> directly on some. Deliberately not
+        # scanning /mnt: that's the traditional spot for manually-mounted
+        # arbitrary filesystems (dual-boot partitions, network shares,
+        # etc.), which isn't removable-media-specific and was showing up
+        # as irrelevant "candidate" clutter.
         for base in (Path("/run/media"), Path("/media")):
             if not base.is_dir():
                 continue
@@ -406,13 +385,6 @@ def detect_candidate_drives() -> list[tuple[Path, bool]]:
                         pass
             except PermissionError:
                 continue
-        mnt = Path("/mnt")
-        if mnt.is_dir():
-            try:
-                candidates.update(e for e in mnt.iterdir() if e.is_dir())
-            except PermissionError:
-                pass
-        candidates = {p for p in candidates if _linux_mount_is_removable(p)}
     elif sys.platform == "darwin":
         volumes = Path("/Volumes")
         if volumes.is_dir():
