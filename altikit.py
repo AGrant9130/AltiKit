@@ -832,6 +832,11 @@ class FileExportTab(QWidget):
         self.export_btn.clicked.connect(self.on_export)
         layout.addWidget(self.export_btn)
 
+        self.delete_btn = QPushButton(f"Delete Selected {item_label.title()}(s)")
+        self.delete_btn.setEnabled(False)
+        self.delete_btn.clicked.connect(self.on_delete)
+        layout.addWidget(self.delete_btn)
+
         layout.addStretch(1)
 
         self.refresh_file_list()
@@ -882,7 +887,7 @@ class FileExportTab(QWidget):
             if self.file_list.item(i).checkState() == Qt.Checked
         ]
         self._update_file_label()
-        self._update_export_enabled()
+        self._update_buttons_enabled()
 
     def on_browse_file(self):
         files, _ = QFileDialog.getOpenFileNames(self, f"Select the {self.item_label}(s) to export")
@@ -896,7 +901,7 @@ class FileExportTab(QWidget):
         self.file_list.blockSignals(False)
         self.source_files = [Path(f) for f in files]
         self._update_file_label()
-        self._update_export_enabled()
+        self._update_buttons_enabled()
 
     def _update_file_label(self):
         if not self.source_files:
@@ -915,10 +920,11 @@ class FileExportTab(QWidget):
             return
         self.dest_folder = Path(directory)
         self.folder_label.setText(str(self.dest_folder))
-        self._update_export_enabled()
+        self._update_buttons_enabled()
 
-    def _update_export_enabled(self):
+    def _update_buttons_enabled(self):
         self.export_btn.setEnabled(bool(self.source_files) and self.dest_folder is not None)
+        self.delete_btn.setEnabled(bool(self.source_files))
 
     def on_export(self):
         errors = []
@@ -942,6 +948,43 @@ class FileExportTab(QWidget):
                 self, "Export complete",
                 f"Copied {copied} file(s) to {self.dest_folder}.",
             )
+
+    def on_delete(self):
+        if not self.source_files:
+            return
+        files_str = "\n".join(p.name for p in self.source_files)
+        resp = QMessageBox.warning(
+            self, "Confirm delete",
+            f"Permanently delete {len(self.source_files)} file(s) from disk?\n\n"
+            f"{files_str}\n\nThis cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if resp != QMessageBox.Yes:
+            return
+
+        errors = []
+        deleted = 0
+        for f in self.source_files:
+            try:
+                f.unlink()
+                deleted += 1
+            except OSError as e:
+                errors.append(f"{f.name}: {e}")
+
+        # Rebuilds the list from disk (so deleted files disappear) and
+        # resets checkboxes/source_files/button state via its own
+        # on_file_item_changed() call at the end.
+        self.refresh_file_list()
+
+        if errors:
+            QMessageBox.warning(
+                self, "Delete finished with errors",
+                f"Deleted {deleted} of {deleted + len(errors)} file(s).\n\n"
+                "Failed:\n" + "\n".join(errors),
+            )
+        else:
+            QMessageBox.information(self, "Delete complete", f"Deleted {deleted} file(s).")
 
 
 class KeypadImportSection(QWidget):
