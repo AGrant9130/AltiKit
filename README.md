@@ -31,13 +31,20 @@ first.
 ## The three tabs
 
 - **Update Keypad** - the language file update flow described below.
-- **Export Config** - pick a VFD configuration file saved on the
-  keypad and a destination folder, then copy it off. Just a plain file
-  copy (browse to wherever the file actually lives on the mounted
-  keypad drive) - there's no assumed folder/naming convention for
-  these like there is for `LANG`/`KPCONF`.
-- **Export Screenshots** - identical to Export Config, for screenshots
-  saved on the keypad instead.
+- **Config Files** - VFD configuration files, read from/written to the
+  keypad's `DRVCONF` folder:
+  - *Export from Keypad* - auto-lists files found in `DRVCONF` on
+    whichever connected drive looks like the keypad. Select one or more
+    (or "Select All"), pick a destination folder, and export. "Browse
+    Manually..." is there as a fallback if auto-detection misses it.
+  - *Import to Keypad* - the reverse: browse to one or more config
+    files anywhere on your PC and copy them onto the connected
+    keypad's `DRVCONF` folder directly (no destination picker - it
+    always targets the detected keypad, since that's the point).
+- **Export Screenshots** - same idea as the Config Files tab's export
+  side, for screenshots saved in the keypad's `PRTSCR` folder. No
+  import here - uploading a screenshot back to the device isn't a
+  real use case.
 
 ## Development setup
 

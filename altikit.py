@@ -50,6 +50,7 @@ from urllib.request import Request, urlopen
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QDialog,
@@ -783,37 +784,42 @@ class EjectThread(QThread):
 
 
 class FileExportTab(QWidget):
-    """"Pick a source file, pick a destination folder, copy it over" tab
-    for exporting VFD configuration files (DRVCONF) and screenshots
-    (PRTSCR) saved on the keypad. Auto-lists files found in that folder
-    on whichever drive currently looks like the connected keypad, with a
-    manual browse fallback for anything unusual (drive not auto-detected,
-    file living somewhere else, etc.)."""
+    """"Pick one or more source files, pick a destination folder, copy
+    them over" tab for exporting VFD configuration files (DRVCONF) and
+    screenshots (PRTSCR) saved on the keypad. Auto-lists files found in
+    that folder on whichever drive currently looks like the connected
+    keypad, with a manual browse fallback for anything unusual (drive
+    not auto-detected, file living somewhere else, etc.)."""
 
     def __init__(self, item_label: str, keypad_subfolder: str):
         super().__init__()
         self.item_label = item_label
         self.keypad_subfolder = keypad_subfolder
-        self.source_file: Path | None = None
+        self.source_files: list[Path] = []
         self.dest_folder: Path | None = None
 
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel(f"1. Select the {item_label} to export:"))
+        layout.addWidget(QLabel(f"1. Select the {item_label}(s) to export:"))
         self.file_list = QListWidget()
-        self.file_list.itemClicked.connect(self.on_file_item_clicked)
+        self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.file_list.itemSelectionChanged.connect(self.on_file_selection_changed)
         layout.addWidget(self.file_list)
 
         file_btn_row = QHBoxLayout()
+        self.select_all_btn = QPushButton("Select All")
+        self.select_all_btn.clicked.connect(self.file_list.selectAll)
         self.refresh_btn = QPushButton("Refresh List")
         self.refresh_btn.clicked.connect(self.refresh_file_list)
         self.browse_btn = QPushButton("Browse Manually...")
         self.browse_btn.clicked.connect(self.on_browse_file)
+        file_btn_row.addWidget(self.select_all_btn)
         file_btn_row.addWidget(self.refresh_btn)
         file_btn_row.addWidget(self.browse_btn)
         layout.addLayout(file_btn_row)
 
-        self.file_label = QLabel("No file selected")
+        self.file_label = QLabel("No files selected")
+        self.file_label.setWordWrap(True)
         layout.addWidget(self.file_label)
 
         layout.addWidget(QLabel("2. Select the folder to export to:"))
@@ -823,7 +829,7 @@ class FileExportTab(QWidget):
         self.folder_label = QLabel("No folder selected")
         layout.addWidget(self.folder_label)
 
-        self.export_btn = QPushButton(f"Export {item_label.title()}")
+        self.export_btn = QPushButton(f"Export {item_label.title()}(s)")
         self.export_btn.setEnabled(False)
         self.export_btn.clicked.connect(self.on_export)
         layout.addWidget(self.export_btn)
@@ -857,21 +863,34 @@ class FileExportTab(QWidget):
             item.setData(Qt.UserRole, str(f))
             self.file_list.addItem(item)
 
-    def on_file_item_clicked(self, item: QListWidgetItem):
-        path_str = item.data(Qt.UserRole)
-        if not path_str:
-            return
-        self.source_file = Path(path_str)
-        self.file_label.setText(str(self.source_file))
+    def on_file_selection_changed(self):
+        self.source_files = [
+            Path(item.data(Qt.UserRole))
+            for item in self.file_list.selectedItems()
+            if item.data(Qt.UserRole)
+        ]
+        self._update_file_label()
         self._update_export_enabled()
 
     def on_browse_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, f"Select the {self.item_label} to export")
-        if not file_path:
+        files, _ = QFileDialog.getOpenFileNames(self, f"Select the {self.item_label}(s) to export")
+        if not files:
             return
-        self.source_file = Path(file_path)
-        self.file_label.setText(str(self.source_file))
+        self.file_list.clearSelection()
+        self.source_files = [Path(f) for f in files]
+        self._update_file_label()
         self._update_export_enabled()
+
+    def _update_file_label(self):
+        if not self.source_files:
+            self.file_label.setText("No files selected")
+        elif len(self.source_files) == 1:
+            self.file_label.setText(str(self.source_files[0]))
+        else:
+            self.file_label.setText(
+                f"{len(self.source_files)} files selected:\n"
+                + "\n".join(p.name for p in self.source_files)
+            )
 
     def on_select_folder(self):
         directory = QFileDialog.getExistingDirectory(self, "Select the export folder")
@@ -882,16 +901,134 @@ class FileExportTab(QWidget):
         self._update_export_enabled()
 
     def _update_export_enabled(self):
-        self.export_btn.setEnabled(self.source_file is not None and self.dest_folder is not None)
+        self.export_btn.setEnabled(bool(self.source_files) and self.dest_folder is not None)
 
     def on_export(self):
-        dest_path = self.dest_folder / self.source_file.name
-        try:
-            shutil.copy2(self.source_file, dest_path)
-        except OSError as e:
-            QMessageBox.critical(self, "Export failed", str(e))
+        errors = []
+        copied = 0
+        for src in self.source_files:
+            dest_path = self.dest_folder / src.name
+            try:
+                shutil.copy2(src, dest_path)
+                copied += 1
+            except OSError as e:
+                errors.append(f"{src.name}: {e}")
+
+        if errors:
+            QMessageBox.warning(
+                self, "Export finished with errors",
+                f"Copied {copied} of {len(self.source_files)} file(s) to {self.dest_folder}.\n\n"
+                "Failed:\n" + "\n".join(errors),
+            )
+        else:
+            QMessageBox.information(
+                self, "Export complete",
+                f"Copied {copied} file(s) to {self.dest_folder}.",
+            )
+
+
+class KeypadImportSection(QWidget):
+    """The reverse of FileExportTab: pick one or more files from
+    anywhere on the PC and copy them onto the connected keypad's
+    <keypad_subfolder> directory. Only used for config files - "import"
+    doesn't make sense for screenshots, so this isn't reused for the
+    Export Screenshots tab the way FileExportTab is."""
+
+    def __init__(self, item_label: str, keypad_subfolder: str):
+        super().__init__()
+        self.item_label = item_label
+        self.keypad_subfolder = keypad_subfolder
+        self.source_files: list[Path] = []
+        self.target_folder: Path | None = None
+
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel(f"1. Select the {item_label}(s) to import:"))
+        self.browse_btn = QPushButton(f"Browse for {item_label.title()}(s)...")
+        self.browse_btn.clicked.connect(self.on_browse_files)
+        layout.addWidget(self.browse_btn)
+        self.files_label = QLabel("No files selected")
+        self.files_label.setWordWrap(True)
+        layout.addWidget(self.files_label)
+
+        layout.addWidget(QLabel("2. Target on keypad:"))
+        target_row = QHBoxLayout()
+        self.target_label = QLabel("")
+        self.target_label.setWordWrap(True)
+        self.refresh_target_btn = QPushButton("Refresh")
+        self.refresh_target_btn.clicked.connect(self.refresh_target)
+        target_row.addWidget(self.target_label, stretch=1)
+        target_row.addWidget(self.refresh_target_btn)
+        layout.addLayout(target_row)
+
+        self.import_btn = QPushButton(f"Import {item_label.title()}(s)")
+        self.import_btn.setEnabled(False)
+        self.import_btn.clicked.connect(self.on_import)
+        layout.addWidget(self.import_btn)
+
+        layout.addStretch(1)
+
+        self.refresh_target()
+
+    def refresh_target(self):
+        keypad_root = find_connected_keypad_root()
+        if keypad_root is None:
+            self.target_folder = None
+            self.target_label.setText("No keypad detected - connect it first")
+        else:
+            self.target_folder = keypad_root / self.keypad_subfolder
+            self.target_label.setText(str(self.target_folder))
+        self._update_import_enabled()
+
+    def on_browse_files(self):
+        files, _ = QFileDialog.getOpenFileNames(self, f"Select {self.item_label}(s) to import")
+        if not files:
             return
-        QMessageBox.information(self, "Export complete", f"Copied to {dest_path}")
+        self.source_files = [Path(f) for f in files]
+        if len(self.source_files) == 1:
+            self.files_label.setText(str(self.source_files[0]))
+        else:
+            self.files_label.setText(
+                f"{len(self.source_files)} files selected:\n"
+                + "\n".join(p.name for p in self.source_files)
+            )
+        self._update_import_enabled()
+
+    def _update_import_enabled(self):
+        self.import_btn.setEnabled(bool(self.source_files) and self.target_folder is not None)
+
+    def on_import(self):
+        # Re-check right before importing rather than trusting a
+        # possibly-stale target from whenever the tab was last refreshed -
+        # cheap to redo and avoids writing to a folder path that no
+        # longer matches a connected keypad.
+        self.refresh_target()
+        if self.target_folder is None:
+            QMessageBox.warning(self, "No keypad detected", "Connect the keypad and try again.")
+            return
+
+        self.target_folder.mkdir(parents=True, exist_ok=True)
+        errors = []
+        copied = 0
+        for src in self.source_files:
+            dest_path = self.target_folder / src.name
+            try:
+                shutil.copy2(src, dest_path)
+                copied += 1
+            except OSError as e:
+                errors.append(f"{src.name}: {e}")
+
+        if errors:
+            QMessageBox.warning(
+                self, "Import finished with errors",
+                f"Copied {copied} of {len(self.source_files)} file(s) to {self.target_folder}.\n\n"
+                "Failed:\n" + "\n".join(errors),
+            )
+        else:
+            QMessageBox.information(
+                self, "Import complete",
+                f"Copied {copied} file(s) to {self.target_folder}.",
+            )
 
 
 class MainWindow(QMainWindow):
@@ -1031,7 +1168,19 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.log_view, stretch=1)
 
         tabs.addTab(update_tab, "Update Keypad")
-        tabs.addTab(FileExportTab("configuration file", "DRVCONF"), "Export Config")
+
+        config_tab = QWidget()
+        config_layout = QVBoxLayout(config_tab)
+        export_group = QGroupBox("Export from Keypad")
+        export_group_layout = QVBoxLayout(export_group)
+        export_group_layout.addWidget(FileExportTab("configuration file", "DRVCONF"))
+        config_layout.addWidget(export_group)
+        import_group = QGroupBox("Import to Keypad")
+        import_group_layout = QVBoxLayout(import_group)
+        import_group_layout.addWidget(KeypadImportSection("configuration file", "DRVCONF"))
+        config_layout.addWidget(import_group)
+        tabs.addTab(config_tab, "Config Files")
+
         tabs.addTab(FileExportTab("screenshot", "PRTSCR"), "Export Screenshots")
 
         self._populate_languages_from_cache()
