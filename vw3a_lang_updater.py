@@ -55,8 +55,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QStyle,
-    QStyleOptionGroupBox,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -394,11 +392,17 @@ def detect_candidate_drives() -> list[tuple[Path, bool]]:
         if volumes.is_dir():
             candidates.update(e for e in volumes.iterdir() if e.is_dir())
     elif sys.platform == "win32":
+        import ctypes
         import string
+        DRIVE_REMOVABLE = 2
         for letter in string.ascii_uppercase:
-            root = Path(f"{letter}:\\")
-            if root.exists():
-                candidates.add(root)
+            root = f"{letter}:\\"
+            # Only list actually-removable drives (what USB mass-storage
+            # devices like the keypad report as) rather than every drive
+            # letter in use - nobody needs C:\ offered as a "candidate"
+            # keypad location.
+            if ctypes.windll.kernel32.GetDriveTypeW(root) == DRIVE_REMOVABLE:
+                candidates.add(Path(root))
 
     results = [(p, looks_like_keypad_drive(p)) for p in candidates]
     # Keypad matches first, then alphabetical.
@@ -570,6 +574,11 @@ def eject_drive(target_root: Path, log=lambda msg: None) -> None:
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps_script],
                 capture_output=True, text=True, check=True,
+                # A windowed (console-less) app's child process still gets
+                # its own new console window by default on Windows unless
+                # told not to - this is what was flashing a PowerShell
+                # window on every eject.
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
         except FileNotFoundError as e:
             raise RuntimeError("Can't eject: 'powershell' isn't available.") from e
@@ -659,6 +668,13 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
+        # Extra top margin so the floating help button (see below) always
+        # has clear space above the "1. ..." box regardless of platform -
+        # trying to pixel-align it flush with the box's own border/title
+        # text turned out to need more headroom than some platforms'
+        # default margins leave, causing it to hit the window's title bar.
+        margins = layout.contentsMargins()
+        layout.setContentsMargins(margins.left(), 30, margins.right(), margins.bottom())
 
         # --- Update check group ---
         self.update_box = QGroupBox("1. Get the language package")
@@ -783,29 +799,17 @@ class MainWindow(QMainWindow):
     # -- helpers --------------------------------------------------------
 
     def _position_help_button(self):
-        """Aligns the floating help button's bottom edge with the bottom
-        of the "1. ..." title text drawn on the group box's border, by
-        asking the style for that title's actual rect rather than
-        guessing a pixel offset (which would drift across platforms/
-        styles/DPI settings)."""
-        opt = QStyleOptionGroupBox()
-        self.update_box.initStyleOption(opt)
-        label_rect = self.update_box.style().subControlRect(
-            QStyle.ComplexControl.CC_GroupBox,
-            opt,
-            QStyle.SubControl.SC_GroupBoxLabel,
-            self.update_box,
-        )
-        box_top_left = self.update_box.mapTo(self.centralWidget(), self.update_box.rect().topLeft())
+        """Places the floating help button in the top-right corner, a
+        small fixed margin down from the window top. A previous version
+        tried to pixel-align its bottom edge with the "1. ..." box's own
+        border/title text using the style's reported label geometry, but
+        that geometry leaves different amounts of headroom per platform -
+        on Windows there wasn't enough room for the button's full height
+        without it poking into the title bar. A fixed offset (paired with
+        the extra top margin reserved on the main layout) is more robust
+        than chasing per-platform/style pixel offsets."""
         x = self.centralWidget().width() - self.help_btn.width() - 12
-        y = box_top_left.y() + label_rect.bottom() - self.help_btn.height()
-        if sys.platform == "win32":
-            # Windows' native group box style's SC_GroupBoxLabel rect sits
-            # lower relative to the actual drawn title than on the Linux
-            # styles this was tuned against, so the base calculation lands
-            # the button too low (confirmed: the box border was cutting
-            # through the middle of the button). Move it up on Windows only.
-            y -= 8
+        y = 6
         self.help_btn.move(x, y)
 
     def resizeEvent(self, event):
