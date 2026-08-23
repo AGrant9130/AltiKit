@@ -803,10 +803,11 @@ class FileExportTab(QWidget):
 
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel(f"1. Check the {item_label}(s) to export:"))
+        file_group = QGroupBox(f"1. Check the {item_label}(s) to export")
+        file_group_layout = QVBoxLayout(file_group)
         self.file_list = QListWidget()
         self.file_list.itemChanged.connect(self.on_file_item_changed)
-        layout.addWidget(self.file_list)
+        file_group_layout.addWidget(self.file_list)
 
         file_btn_row = QHBoxLayout()
         self.select_all_btn = QPushButton("Select All")
@@ -818,23 +819,26 @@ class FileExportTab(QWidget):
         file_btn_row.addWidget(self.select_all_btn)
         file_btn_row.addWidget(self.refresh_btn)
         file_btn_row.addWidget(self.browse_btn)
-        layout.addLayout(file_btn_row)
+        file_group_layout.addLayout(file_btn_row)
 
         self.file_label = QLabel("No files selected")
         self.file_label.setWordWrap(True)
-        layout.addWidget(self.file_label)
+        file_group_layout.addWidget(self.file_label)
+        layout.addWidget(file_group)
 
-        layout.addWidget(QLabel("2. Select the folder to export to:"))
+        folder_group = QGroupBox("2. Select the folder to export to")
+        folder_group_layout = QVBoxLayout(folder_group)
         self.select_folder_btn = QPushButton("Select Export Folder...")
         self.select_folder_btn.clicked.connect(self.on_select_folder)
-        layout.addWidget(self.select_folder_btn)
+        folder_group_layout.addWidget(self.select_folder_btn)
         self.folder_label = QLabel("No folder selected")
-        layout.addWidget(self.folder_label)
+        folder_group_layout.addWidget(self.folder_label)
 
         self.export_btn = QPushButton(f"Export {item_label.title()}(s)")
         self.export_btn.setEnabled(False)
         self.export_btn.clicked.connect(self.on_export)
-        layout.addWidget(self.export_btn)
+        folder_group_layout.addWidget(self.export_btn)
+        layout.addWidget(folder_group)
 
         self.delete_btn = QPushButton(f"Delete Selected {item_label.title()}(s)")
         self.delete_btn.setEnabled(False)
@@ -1287,7 +1291,12 @@ class MainWindow(QMainWindow):
         else:
             help_view.setPlainText(f"Couldn't find HELP.md next to the script at {HELP_PATH}.")
         help_layout.addWidget(help_view)
-        tabs.addTab(help_tab, "Help")
+        help_index = tabs.addTab(help_tab, "Help")
+        # Hidden from the tab bar itself - "?" is the only way in, so
+        # there's exactly one way to reach help, not two. Still a real
+        # tab underneath (setCurrentWidget below just works), not a
+        # popup window.
+        tabs.setTabVisible(help_index, False)
 
         self.tabs = tabs
         self.help_tab = help_tab
