@@ -54,21 +54,25 @@ System Settings → Privacy & Security if it comes up.
 
 ## Getting updates
 
-Click "Check for Updates" (top-right, next to "?") - it'll tell you if
-a newer version is out and offer to open the Releases page. This is
-plain Python (`urllib` + `webbrowser`), no OS-specific code, so it
-works the same on every platform. It only works once this repo's
-releases are public (GitHub's unauthenticated API can't see
-private-repo releases) - until then it'll just say it couldn't check.
+Click "Check for Updates" (top-right, next to "?"). If a newer version
+is out, it asks whether to download and install it now - say yes and
+it handles the rest itself:
 
-What "updating" means once you're there differs by platform:
+- **Windows** - downloads the new `AltiKit-Setup-*.exe` from the
+  release and launches it (the normal install wizard, not silent),
+  then closes itself so the upgrade can proceed in place.
+- **Linux/macOS** - only automatic for an actual git clone with no
+  uncommitted local changes: runs `git pull`, re-syncs via
+  `install.sh`, then restarts itself. If it's not a git checkout (e.g.
+  you extracted a source zip) or the working tree is dirty, it tells
+  you so and points at `update.sh`/the Releases page instead of
+  guessing.
 
-- **Windows** - download and run the new `AltiKit-Setup-*.exe`; it
-  upgrades your existing install in place, no uninstall needed.
-- **Linux/macOS** - run `./update.sh` from your existing checkout - it
-  runs `git pull` (or tells you to re-download the source zip if you
-  didn't clone with git) and then re-syncs dependencies via
-  `install.sh` automatically.
+This is plain Python (`urllib` + `subprocess`), no OS-specific code
+beyond picking which of the above to do, so the check itself works the
+same everywhere. It only works once this repo's releases are public
+(GitHub's unauthenticated API can't see private-repo releases) - until
+then it'll just say it couldn't check.
 
 ## The three tabs
 

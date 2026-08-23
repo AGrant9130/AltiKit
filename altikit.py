@@ -271,8 +271,130 @@ def check_for_update(current_version: str) -> dict:
         return {"status": "error", "message": "Couldn't check for updates: no release found."}
 
     if _parse_version(latest_tag) > _parse_version(current_version):
-        return {"status": "update_available", "latest_version": latest_tag, "url": release_url}
+        return {
+            "status": "update_available",
+            "latest_version": latest_tag,
+            "url": release_url,
+            "assets": data.get("assets", []),
+        }
     return {"status": "up_to_date", "latest_version": latest_tag}
+
+
+def _find_windows_installer_asset(assets: list[dict]) -> str | None:
+    """Picks the AltiKit-Setup-*.exe asset's download URL out of a
+    GitHub release's asset list, if present."""
+    for asset in assets:
+        name = asset.get("name", "")
+        if name.startswith("AltiKit-Setup-") and name.endswith(".exe"):
+            return asset.get("browser_download_url")
+    return None
+
+
+def _download_file(url: str, dest_path: Path, log=lambda msg: None) -> None:
+    """Streams a URL to disk in chunks (rather than reading it all into
+    memory at once - the Windows installer is ~150-300MB with bundled
+    Chromium) and logs rough progress if the server reports a size."""
+    request = Request(url, headers={"User-Agent": "altikit"})
+    with urlopen(request, timeout=30) as response, open(dest_path, "wb") as f:
+        total = response.length or 0
+        downloaded = 0
+        last_reported_pct = -1
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            f.write(chunk)
+            downloaded += len(chunk)
+            if total:
+                pct = downloaded * 100 // total
+                if pct != last_reported_pct:
+                    log(f"Downloading... {pct}%")
+                    last_reported_pct = pct
+    if not dest_path.is_file() or dest_path.stat().st_size == 0:
+        raise RuntimeError("Downloaded file was empty.")
+
+
+def perform_self_update(update_result: dict, log=lambda msg: None) -> None:
+    """Downloads and applies the update described by update_result (the
+    dict check_for_update() returns for status="update_available"), then
+    launches the updated app as a new process. Raises with a clear
+    message on any failure rather than guessing/silently giving up. The
+    caller is expected to quit the current process immediately after
+    this returns successfully - the running app's files may already be
+    locked/replaced by that point.
+    """
+    if sys.platform == "win32":
+        _self_update_windows(update_result, log)
+    elif sys.platform.startswith("linux") or sys.platform == "darwin":
+        _self_update_unix(log)
+    else:
+        raise RuntimeError(f"Auto-update isn't supported on platform '{sys.platform}'.")
+
+
+def _self_update_windows(update_result: dict, log) -> None:
+    asset_url = _find_windows_installer_asset(update_result.get("assets", []))
+    if not asset_url:
+        raise RuntimeError(
+            "Couldn't find a Windows installer in the latest release's files. "
+            f"Check {update_result.get('url', 'the Releases page')} manually."
+        )
+
+    import tempfile
+    installer_name = asset_url.rsplit("/", 1)[-1]
+    installer_path = Path(tempfile.gettempdir()) / installer_name
+    log(f"Downloading {installer_name}...")
+    _download_file(asset_url, installer_path, log=log)
+
+    log("Launching installer...")
+    # Not silent - shows the normal install wizard, same as running it
+    # by hand, so the user can see/control the upgrade rather than have
+    # files replaced with no visible feedback. CloseApplications /
+    # RestartApplications in installer.iss are the safety net if this
+    # process hasn't fully exited by the time Inno Setup needs to
+    # replace its files.
+    subprocess.Popen([str(installer_path)], close_fds=True)
+
+
+def _self_update_unix(log) -> None:
+    # No packaged installer for Linux/macOS (see README) - this mirrors
+    # update.sh: git pull, then re-sync via install.sh. Only works for
+    # an actual git checkout, same limitation update.sh already has.
+    repo_dir = _APP_ROOT
+    if not (repo_dir / ".git").is_dir():
+        raise RuntimeError(
+            "This isn't a git checkout, so it can't update itself "
+            "automatically. Re-download the source from the Releases "
+            "page and run install.sh, or use update.sh from a terminal."
+        )
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo_dir, capture_output=True, text=True, check=True,
+    ).stdout
+    if status.strip():
+        raise RuntimeError(
+            "This checkout has uncommitted local changes - not "
+            "auto-updating to avoid clobbering them. Commit or stash "
+            "them, then try again (or run update.sh manually)."
+        )
+
+    log("Pulling latest changes...")
+    try:
+        subprocess.run(["git", "pull"], cwd=repo_dir, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"git pull failed: {e.stderr.strip() or e.stdout.strip()}") from e
+
+    install_script = repo_dir / "install.sh"
+    log("Re-syncing dependencies (this can take a minute)...")
+    try:
+        subprocess.run([str(install_script)], cwd=repo_dir, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"install.sh failed: {e.stderr.strip() or e.stdout.strip()}") from e
+
+    log("Restarting...")
+    subprocess.Popen(
+        [str(repo_dir / "launch.sh")], cwd=repo_dir, close_fds=True, start_new_session=True,
+    )
 
 
 SE_HOMEPAGE = "https://www.se.com/us/en/"
@@ -724,6 +846,23 @@ class UpdateCheckThread(QThread):
 
     def run(self):
         self.finished_ok.emit(check_for_update(APP_VERSION))
+
+
+class SelfUpdateThread(QThread):
+    log_msg = Signal(str)
+    finished_ok = Signal()
+    failed = Signal(str)
+
+    def __init__(self, update_result: dict):
+        super().__init__()
+        self.update_result = update_result
+
+    def run(self):
+        try:
+            perform_self_update(self.update_result, log=self.log_msg.emit)
+            self.finished_ok.emit()
+        except Exception as e:
+            self.failed.emit(str(e))
 
 
 class BrowserFetchThread(QThread):
@@ -1414,11 +1553,11 @@ class MainWindow(QMainWindow):
                 resp = QMessageBox.question(
                     self, "Update available",
                     f"A new version ({result['latest_version']}) is available "
-                    f"(you have {APP_VERSION}).\n\nOpen the download page?",
+                    f"(you have {APP_VERSION}).\n\nDownload and install it now?",
                     QMessageBox.Yes | QMessageBox.No,
                 )
                 if resp == QMessageBox.Yes:
-                    webbrowser.open(result["url"])
+                    self.start_self_update(result)
             elif status == "up_to_date":
                 QMessageBox.information(
                     self, "Up to date",
@@ -1429,6 +1568,30 @@ class MainWindow(QMainWindow):
 
         self.update_check_thread.finished_ok.connect(on_result)
         self.update_check_thread.start()
+
+    def start_self_update(self, update_result: dict):
+        self.check_update_btn.setEnabled(False)
+        self.check_update_btn.setText("Updating...")
+        self.log(f"Updating to {update_result['latest_version']}...")
+        self.self_update_thread = SelfUpdateThread(update_result)
+        self.self_update_thread.log_msg.connect(self.log)
+        self.self_update_thread.finished_ok.connect(self.on_self_update_ok)
+        self.self_update_thread.failed.connect(self.on_self_update_failed)
+        self.self_update_thread.start()
+
+    def on_self_update_ok(self):
+        self.log("Update launched - closing so it can finish...")
+        QApplication.quit()
+
+    def on_self_update_failed(self, err: str):
+        self.check_update_btn.setEnabled(True)
+        self.check_update_btn.setText("Check for Updates")
+        self.log(f"ERROR updating: {err}")
+        QMessageBox.critical(
+            self, "Update failed",
+            f"{err}\n\nYou can still update manually - see the Releases "
+            f"page: https://github.com/{GITHUB_REPO}/releases",
+        )
 
     def on_open_page_clicked(self):
         webbrowser.open(SE_DOWNLOAD_PAGE)

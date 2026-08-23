@@ -39,6 +39,13 @@ WizardStyle=modern
 ; (AppData\Local\Programs instead of Program Files, etc.), so this works
 ; on locked-down work laptops without an admin prompt.
 PrivilegesRequired=lowest
+; Safety net for the in-app "Check for Updates" self-update flow: it
+; quits the app right after launching this installer, but in case that
+; hasn't fully happened yet (still exiting, multiple instances, etc.),
+; have Inno Setup close the running AltiKit.exe itself before
+; overwriting its files, then relaunch it once the upgrade is done.
+CloseApplications=yes
+RestartApplications=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
