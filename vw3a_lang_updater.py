@@ -97,6 +97,11 @@ MAX_LANGUAGES = 10  # device hard limit, not counting Fonts.ums
 
 # code -> display name, taken from Schneider's own Readme file.
 # "(incomplete)" markers per Schneider's readme are preserved as a hint.
+# Note: V1.78's actual package also includes "jp"/"nl"/"uk", which aren't
+# documented in that readme. jp/nl are unambiguous (Japanese/Dutch) and
+# added below; "uk" is deliberately left unmapped (falls back to showing
+# the raw code) rather than guessed at - it can't be Ukrainian (that's
+# already "ua"), most likely a UK-English variant, but that's unconfirmed.
 LANGUAGE_NAMES = {
     "bg": "Bulgarian (incomplete)",
     "br": "Portuguese (Brazil)",
@@ -110,8 +115,10 @@ LANGUAGE_NAMES = {
     "fi": "Finnish (incomplete)",
     "fr": "French",
     "hu": "Hungarian",
+    "jp": "Japanese",
     "ko": "Korean",
     "it": "Italian",
+    "nl": "Dutch",
     "no": "Norwegian (incomplete)",
     "pl": "Polish",
     "ro": "Romanian",
@@ -124,6 +131,16 @@ LANGUAGE_NAMES = {
     "ua": "Ukrainian",
     "vi": "Vietnamese",
 }
+
+# Most-to-least commonly needed, for sorting the language list in the GUI
+# (English/Spanish first per explicit preference, then roughly by
+# international prevalence) rather than alphabetically by code.
+LANGUAGE_ORDER = [
+    "en", "es", "fr", "de", "nl", "it", "br", "cn", "ru", "tw", "jp", "pl",
+    "tr", "ko", "vi", "ua", "ro", "el", "cs", "hu", "sv", "dk",
+    "th", "bg", "sk", "fi", "no",
+]
+_LANGUAGE_RANK = {code: i for i, code in enumerate(LANGUAGE_ORDER)}
 
 
 @dataclass
@@ -329,15 +346,18 @@ def find_subdir(root: Path, name: str) -> Path | None:
 
 
 def list_available_languages(extract_dir: Path) -> list[tuple[str, str, Path]]:
-    """Returns list of (code, display_name, ums_path) for *_labels.ums files."""
+    """Returns list of (code, display_name, ums_path) for *_labels.ums
+    files, ordered most-to-least commonly needed per LANGUAGE_ORDER
+    (falling back to alphabetical for anything not in that list)."""
     lang_dir = find_subdir(extract_dir, "LANG")
     if lang_dir is None:
         return []
     results = []
-    for ums in sorted(lang_dir.glob("*_labels.ums")):
+    for ums in lang_dir.glob("*_labels.ums"):
         code = ums.stem.replace("_labels", "")
         name = LANGUAGE_NAMES.get(code, code)
         results.append((code, name, ums))
+    results.sort(key=lambda item: (_LANGUAGE_RANK.get(item[0], len(LANGUAGE_ORDER)), item[0]))
     return results
 
 
