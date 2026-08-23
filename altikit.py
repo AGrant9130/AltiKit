@@ -1369,6 +1369,11 @@ class MainWindow(QMainWindow):
         self.state = LocalState.load()
         self.extract_dir: Path | None = None
         self.target_dir: Path | None = None
+        # Set while ApplyThread/EjectThread is actively writing to or
+        # ejecting the keypad drive, so self-update (which quits the app,
+        # and on Linux/macOS overwrites the running app's own files via
+        # git pull) can refuse to run mid-transfer instead of racing it.
+        self.keypad_busy_reason: str | None = None
 
         tabs = QTabWidget()
         self.setCentralWidget(tabs)
@@ -1637,6 +1642,13 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(self.help_tab)
 
     def on_check_updates_clicked(self):
+        if self.keypad_busy_reason:
+            QMessageBox.warning(
+                self, "Keypad busy",
+                f"Can't check for app updates while {self.keypad_busy_reason} - "
+                "wait for it to finish first.",
+            )
+            return
         self.check_update_btn.setEnabled(False)
         self.check_update_btn.setText("Checking...")
         self.update_check_thread = UpdateCheckThread()
@@ -1666,6 +1678,16 @@ class MainWindow(QMainWindow):
         self.update_check_thread.start()
 
     def start_self_update(self, update_result: dict):
+        # Re-checked here (not just in on_check_updates_clicked) since a
+        # keypad transfer can start in the time between that click and
+        # the user answering the "update available?" prompt.
+        if self.keypad_busy_reason:
+            QMessageBox.warning(
+                self, "Keypad busy",
+                f"Can't update AltiKit while {self.keypad_busy_reason} - "
+                "wait for it to finish first.",
+            )
+            return
         self.check_update_btn.setEnabled(False)
         self.check_update_btn.setText("Updating...")
         self.log(f"Updating to {update_result['latest_version']}...")
@@ -1844,6 +1866,7 @@ class MainWindow(QMainWindow):
         self.eject_btn.setVisible(False)
         self.log("Starting transfer - the app will stay responsive; "
                   "watch the log below for per-step timing.")
+        self.keypad_busy_reason = "updating the keypad's language files"
         self.apply_thread = ApplyThread(
             self.extract_dir, codes, self.target_dir,
             self.backup_checkbox.isChecked(),
@@ -1862,6 +1885,7 @@ class MainWindow(QMainWindow):
         self.apply_progress_bar.setVisible(False)
         self.apply_btn.setEnabled(True)
         self.eject_btn.setVisible(True)
+        self.keypad_busy_reason = None
         if self.auto_eject_checkbox.isChecked():
             self.log("Auto-eject enabled - ejecting now...")
             self.on_eject_clicked()
@@ -1874,11 +1898,13 @@ class MainWindow(QMainWindow):
     def on_apply_failed(self, err: str):
         self.apply_progress_bar.setVisible(False)
         self.apply_btn.setEnabled(True)
+        self.keypad_busy_reason = None
         self.log(f"ERROR applying update: {err}")
         QMessageBox.critical(self, "Update failed", err)
 
     def on_eject_clicked(self):
         self.eject_btn.setEnabled(False)
+        self.keypad_busy_reason = "ejecting the keypad drive"
         self.log(f"Ejecting {self.target_dir}...")
         self.eject_thread = EjectThread(self.target_dir)
         self.eject_thread.log_msg.connect(self.log)
@@ -1889,6 +1915,7 @@ class MainWindow(QMainWindow):
     def on_eject_ok(self):
         self.eject_btn.setVisible(False)
         self.eject_btn.setEnabled(True)
+        self.keypad_busy_reason = None
         self.target_dir = None
         self.target_label.setText("No folder selected")
         self.update_apply_enabled()
@@ -1897,6 +1924,7 @@ class MainWindow(QMainWindow):
 
     def on_eject_failed(self, err: str):
         self.eject_btn.setEnabled(True)
+        self.keypad_busy_reason = None
         self.log(f"ERROR ejecting drive: {err}")
         QMessageBox.critical(self, "Eject failed", err)
 
