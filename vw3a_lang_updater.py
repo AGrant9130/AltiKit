@@ -1194,17 +1194,18 @@ def main():
     elif sys.platform.startswith("linux"):
         # Some Linux desktop themes don't draw a visible border around
         # QGroupBox (just the bold title), unlike Windows' native style.
-        # Add a theme-adaptive border - palette(light) tracks the current
-        # palette's color instead of a hardcoded one, so this still looks
-        # right in both light and dark themes - without changing anything
-        # else about the look. (palette(mid) was tried first but is not
-        # reliably distinct from the window background - confirmed some
-        # palettes define it *darker* than the background, making the
-        # border invisible; palette(light)/(dark) are the roles Qt's own
-        # styles use for guaranteed-visible bevel effects.)
+        # Add a theme-adaptive border using the same accent color the
+        # native style already paints progress bars with (palette(highlight)
+        # is what KDE/Breeze sets from "accent color from wallpaper", and
+        # what its style engine draws progress bar chunks and other
+        # accented elements with) - so the border matches automatically
+        # instead of using an unrelated fixed/neutral color. (palette(mid)
+        # was tried first but isn't reliably distinct from the window
+        # background - confirmed some palettes define it *darker* than
+        # the background, making the border invisible.)
         app.setStyleSheet("""
             QGroupBox {
-                border: 1px solid palette(light);
+                border: 1px solid palette(highlight);
                 border-radius: 4px;
                 margin-top: 10px;
                 padding-top: 6px;
