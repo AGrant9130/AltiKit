@@ -54,7 +54,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QFileDialog,
-    QGroupBox,
+    QGroupBox, 
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -904,14 +904,16 @@ def apply_update(
     selected_codes: list[str],
     target_root: Path,
     make_backup: bool = True,
+    backup_label: str = "before update",
     log=lambda msg: None,
     progress=lambda done, total: None,
 ) -> None:
     """Deletes LANG+KPCONF on target and copies the new ones over,
     filtering LANG down to the selected languages + Fonts.ums. If
     make_backup, snapshots the entire keypad (LANG/KPCONF/DRVCONF/PRTSCR,
-    whichever exist) via take_backup() first - see that function for why
-    it covers more than just the folders being replaced.
+    whichever exist) via take_backup() first, tagged with backup_label -
+    see take_backup() for why it covers more than just the folders being
+    replaced.
 
     Logs a timing breakdown for each step (backup / delete / copy) since
     on some systems - especially Windows with removable drives set to
@@ -968,7 +970,7 @@ def apply_update(
 
     if make_backup:
         log("Backing up entire keypad before making changes...")
-        timed_step("full backup", lambda: take_backup(target_root, label="before update", log=log))
+        timed_step("full backup", lambda: take_backup(target_root, label=backup_label, log=log))
 
     for existing in delete_targets:
         log(f"Removing existing {existing}...")
@@ -1120,12 +1122,13 @@ class ApplyThread(QThread):
     finished_ok = Signal()
     failed = Signal(str)
 
-    def __init__(self, extract_dir, selected_codes, target_root, make_backup):
+    def __init__(self, extract_dir, selected_codes, target_root, make_backup, backup_label="before update"):
         super().__init__()
         self.extract_dir = extract_dir
         self.selected_codes = selected_codes
         self.target_root = target_root
         self.make_backup = make_backup
+        self.backup_label = backup_label
 
     def run(self):
         try:
@@ -1134,6 +1137,7 @@ class ApplyThread(QThread):
                 self.selected_codes,
                 self.target_root,
                 make_backup=self.make_backup,
+                backup_label=self.backup_label,
                 log=self.log_msg.emit,
                 progress=self.progress.emit,
             )
@@ -1926,6 +1930,12 @@ class MainWindow(QMainWindow):
         self.backup_checkbox = QCheckBox("Back up entire keypad before updating (LANG/KPCONF/DRVCONF/PRTSCR)")
         self.backup_checkbox.setChecked(True)
         apply_layout.addWidget(self.backup_checkbox)
+        backup_label_row = QHBoxLayout()
+        backup_label_row.addWidget(QLabel("Backup label (optional):"))
+        self.backup_label_input = QLineEdit()
+        self.backup_label_input.setPlaceholderText("before update")
+        backup_label_row.addWidget(self.backup_label_input, stretch=1)
+        apply_layout.addLayout(backup_label_row)
         self.auto_eject_checkbox = QCheckBox("Automatically eject after updating")
         apply_layout.addWidget(self.auto_eject_checkbox)
         self.apply_btn = QPushButton("Apply Update to Keypad")
@@ -2343,6 +2353,7 @@ class MainWindow(QMainWindow):
         self.apply_thread = ApplyThread(
             self.extract_dir, codes, self.target_dir,
             self.backup_checkbox.isChecked(),
+            backup_label=self.backup_label_input.text().strip() or "before update",
         )
         self.apply_thread.log_msg.connect(self.log)
         self.apply_thread.progress.connect(self.on_apply_progress)

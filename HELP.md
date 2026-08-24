@@ -27,7 +27,8 @@ configuration files and screenshots saved on the keypad.
    misses it.
 4. **Apply Update** - with "Back up entire keypad before updating"
    checked (on by default), it snapshots the entire keypad drive before
-   making any changes. Once done, click "Eject Drive" (or check
+   making any changes. Give it an optional label to help spot it later
+   in the Backup & Restore tab. Once done, click "Eject Drive" (or check
    "Automatically eject after updating" beforehand) before unplugging.
    If something goes wrong, "Restore Last Backup (undo update)" puts
    `LANG`/`KPCONF` back the way they were, from the most recent backup

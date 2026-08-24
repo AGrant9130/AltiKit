@@ -166,7 +166,11 @@ background whenever you click "Check && Download Latest."
    replaced), but `DRVCONF`, `PRTSCR`, and anything else at the drive's
    root too - to a new, dated folder under `~/.altikit/backups/` before
    deleting anything (see "Backup & Restore" below for why it backs up
-   more than just what's being replaced). Once it finishes, an
+   more than just what's being replaced). The optional "Backup label"
+   field next to the checkbox tags that backup so it's easy to spot
+   later in the Backup & Restore tab (e.g. "August rollout") - it stays
+   as you last set it, useful when updating several keypads in one
+   sitting. Once it finishes, an
    **"Eject Drive"** button appears - click it to safely unmount/eject
    the drive (via `udisksctl`
    on Linux, `diskutil` on macOS, or the Shell COM object on Windows),
