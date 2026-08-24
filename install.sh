@@ -8,6 +8,18 @@ set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
+# A venv can go stale without disappearing - e.g. venv/bin/python3 is a
+# symlink to the system python3 that made it, so if that system python
+# gets upgraded/replaced (an OS update, or this being (re)run from a
+# different environment than the one that'll actually launch the app)
+# the venv keeps existing but can no longer even import pip. Detect
+# that and rebuild from scratch rather than leaving a half-broken venv
+# in place for launch.sh to fail against later.
+if [ -d venv ] && ! venv/bin/python3 -m pip --version >/dev/null 2>&1; then
+    echo "Existing virtual environment looks broken (can't run pip) - recreating it..."
+    rm -rf venv
+fi
+
 if [ ! -d venv ]; then
     echo "Creating virtual environment..."
     python3 -m venv venv

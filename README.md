@@ -54,7 +54,10 @@ shortcut/launcher with the path it was run from baked in, so moving
 the folder afterward means re-running `install.sh` to fix that path.
 
 `install.sh` is safe to re-run any time (e.g. after pulling an update -
-every step skips cleanly if already done). `launch.sh` resolves paths
+every step skips cleanly if already done). It also detects a broken
+virtual environment (e.g. left stale after a system Python
+upgrade/replacement) and rebuilds it automatically, rather than leaving
+`launch.sh` to fail against it later. `launch.sh` resolves paths
 relative to itself and logs to `~/.altikit/launch.log` if something
 goes wrong on startup.
 
