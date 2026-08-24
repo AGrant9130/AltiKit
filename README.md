@@ -89,7 +89,7 @@ same everywhere. It only works once this repo's releases are public
 (GitHub's unauthenticated API can't see private-repo releases) - until
 then it'll just say it couldn't check.
 
-## The three tabs
+## The four tabs
 
 - **Update Keypad** - the language file update flow described below.
 - **Config Files** - VFD configuration files, read from/written to the
@@ -106,6 +106,8 @@ then it'll just say it couldn't check.
   side, for screenshots saved in the keypad's `PRTSCR` folder. No
   import here - uploading a screenshot back to the device isn't a
   real use case.
+- **Backup & Restore** - full backup history for the connected keypad,
+  described in its own section below.
 
 ## Development setup
 
@@ -147,24 +149,64 @@ background whenever you click "Check && Download Latest."
    always keeping English installed for support purposes). `Fonts.ums`
    is always included automatically.
 3. **Select keypad drive** — plug the keypad into USB. The app scans
-   common removable-media mount points on startup (`/run/media`,
-   `/media`, `/mnt` on Linux; `/Volumes` on macOS; drive letters on
-   Windows) and lists them, flagging any that already look like a
+   common removable-media mount points on startup (`/run/media` and
+   `/media` on Linux - deliberately not `/mnt`, the traditional spot
+   for manually-mounted arbitrary filesystems rather than removable
+   media; `/Volumes` on macOS; drive letters on Windows) and lists
+   them, flagging any that already look like a
    keypad drive (contain `LANG`/`KPCONF`). Click one to select it, hit
    "Refresh Detected Drives" if you plug the keypad in after opening
    the app, or "Browse Manually..." for anything the scan misses.
-4. **Apply Update** — with "back up existing" checked (recommended, on
-   by default), it copies your current `LANG`/`KPCONF` to
-   `~/.altikit/backups/<drive-name>/` before deleting anything.
-   Once it finishes, an **"Eject Drive"** button appears - click it to
-   safely unmount/eject the drive (via `udisksctl` on Linux, `diskutil`
-   on macOS, or the Shell COM object on Windows), then reconnect the
-   keypad to the drive normally. Check "Automatically eject after
-   updating" beforehand if you'd rather skip that manual click.
+4. **Apply Update** — with "Back up entire keypad before updating"
+   checked (recommended, on by default), it snapshots *everything* on
+   the keypad's drive - not just `LANG`/`KPCONF` (what's being
+   replaced), but `DRVCONF`, `PRTSCR`, and anything else at the drive's
+   root too - to a new, dated folder under `~/.altikit/backups/` before
+   deleting anything (see "Backup & Restore" below for why it backs up
+   more than just what's being replaced). Once it finishes, an
+   **"Eject Drive"** button appears - click it to safely unmount/eject
+   the drive (via `udisksctl`
+   on Linux, `diskutil` on macOS, or the Shell COM object on Windows),
+   then reconnect the keypad to the drive normally. Check "Automatically
+   eject after updating" beforehand if you'd rather skip that manual
+   click.
+
+   If an update goes wrong, **"Restore Last Backup (undo update)"**
+   puts `LANG`/`KPCONF` back the way they were, using the most recent
+   backup for that drive - it leaves `DRVCONF`/`PRTSCR` alone, since
+   those weren't touched by the update in the first place.
 
 Note (per Schneider): the keypad's other settings, e.g. wheel
 sensitivity, get reset after a language update — you may need to
 reconfigure those separately.
+
+## Using the Backup & Restore tab
+
+This is the "just in case something goes badly wrong" safety net,
+separate from the Update Keypad tab's own automatic pre-update backup
+(and independent of it - you can take one any time, not just before an
+update):
+
+- **Take a full backup now** - snapshots *everything* at the connected
+  keypad drive's root - `LANG`/`KPCONF`/`DRVCONF`/`PRTSCR` if present,
+  but also anything else that happens to be there (a folder this app
+  doesn't recognize, stray files, etc.), short of common OS-managed
+  clutter like `System Volume Information` or `Thumbs.db`, which is
+  skipped automatically. This is deliberately "back up everything, in
+  case of anything" rather than a curated list - a curated list can
+  only protect against data loss it already anticipated. Attach an
+  optional label to help tell backups apart later (e.g. "before shop
+  update"). Every backup gets its own folder - nothing is ever
+  overwritten, so a full history accumulates over time.
+- **Existing backups** - lists every backup ever taken (date, drive,
+  what it contains, and its label if any). "Delete Selected Backup"
+  permanently removes one, after confirming.
+- **Restore from selected backup** - pick a backup from the list, check
+  which of its contents you want back (only items actually present in
+  that backup are selectable), and restore them onto the currently
+  connected keypad. Each checked item is deleted and replaced wholesale
+  from the backup - it's not a merge, so double-check you've got the
+  right backup and the right items checked before confirming.
 
 ## Known limitations / things to verify yourself
 

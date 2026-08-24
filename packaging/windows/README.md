@@ -1,7 +1,7 @@
 # Windows packaging
 
 Normally you don't need any of this - push a version tag (see the main
-README's "Releasing a new version" section) and GitHub Actions builds
+README's "Releasing a new Windows build" section) and GitHub Actions builds
 `AltiKit-Setup-<version>.exe` for you automatically.
 
 This doc is for building it locally instead (e.g. to test a change

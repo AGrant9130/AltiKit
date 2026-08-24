@@ -57,6 +57,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -589,6 +590,12 @@ def extract_package(zip_path: Path) -> Path:
         shutil.rmtree(extract_dir)
     extract_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path) as zf:
+        # Guard against a zip entry using "../" (or similar) to write
+        # outside extract_dir ("zip slip") before extracting anything.
+        resolved_dir = extract_dir.resolve()
+        for member in zf.namelist():
+            if not (resolved_dir / member).resolve().is_relative_to(resolved_dir):
+                raise RuntimeError(f"Refusing to extract unsafe zip entry: {member}")
         zf.extractall(extract_dir)
 
     # The zip may extract flat or into a single nested folder - normalize
@@ -721,6 +728,177 @@ def find_connected_keypad_root() -> Path | None:
     return None
 
 
+# --------------------------------------------------------------------------
+# Backup / restore
+# --------------------------------------------------------------------------
+
+BACKUPS_DIR = APP_DIR / "backups"
+
+# OS-managed metadata that can show up at a removable drive's root -
+# not keypad data, and "restoring" it onto a drive is meaningless at
+# best (Windows/macOS manage these themselves) - excluded from backups.
+# Matched case-insensitively since keypad drives are typically
+# FAT32/exFAT, which are case-insensitive.
+_BACKUP_EXCLUDE_NAMES = {
+    "system volume information", "$recycle.bin", ".trashes", ".fseventsd",
+    ".spotlight-v100", ".ds_store", "desktop.ini", "thumbs.db",
+}
+
+
+def _drive_identifier(target_root: Path) -> str:
+    """Stable-ish short identifier for a keypad target, used to name
+    backup folders and to match a backup back to "the currently selected
+    drive" later. target_root.name is empty for a Windows drive root
+    (e.g. "E:\\"), so fall back to the drive letter there; Linux/macOS
+    mount points already have a meaningful .name."""
+    return target_root.name or target_root.drive.rstrip(":\\") or "keypad"
+
+
+def _sanitize_backup_label(label: str) -> str:
+    """Reduces a free-typed label to characters safe in a folder name.
+    Never raises - an empty/all-invalid label just yields "", which
+    take_backup() treats as "no label" rather than failing outright."""
+    label = re.sub(r"[^A-Za-z0-9 _-]", "", label.strip())
+    return re.sub(r"\s+", "_", label.strip())[:40]
+
+
+@dataclass
+class BackupInfo:
+    path: Path
+    created: str  # ISO-ish timestamp string, "" if unknown (see list_backups)
+    drive_id: str
+    label: str
+    items: list[str]  # top-level names (folders or files) captured in this backup
+
+
+def describe_backup(b: BackupInfo) -> str:
+    """Human-readable one-line summary of a backup - shared by the
+    Update tab's restore-confirmation dialog and the Backup & Restore
+    tab's list, so both describe a backup the same way."""
+    created = b.created.replace("T", " ") if b.created else "(unknown time)"
+    label_part = f" — {b.label}" if b.label else ""
+    return f"{created}  •  Drive {b.drive_id or '?'}  •  {', '.join(b.items)}{label_part}"
+
+
+def take_backup(target_root: Path, label: str = "", log=lambda msg: None) -> "BackupInfo | None":
+    """Snapshots everything at target_root's top level - not just the
+    keypad folders this app knows about (LANG/KPCONF/DRVCONF/PRTSCR),
+    but anything else that happens to be there too (a firmware folder
+    this app doesn't recognize, stray files, etc.), short of the
+    OS-metadata entries in _BACKUP_EXCLUDE_NAMES. This is deliberately
+    a "back up everything, in case of anything" snapshot rather than a
+    curated list, since a curated list can only protect against data
+    loss it already anticipated.
+
+    Goes into a new, distinct folder under BACKUPS_DIR - unlike a
+    single "last backup" location, this never overwrites a previous
+    backup, so a history accumulates for the Backup & Restore tab to
+    list and restore from individually. Returns None (and leaves
+    nothing behind) if target_root had nothing worth backing up.
+    """
+    BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+    drive_id = _drive_identifier(target_root)
+    timestamp = time.strftime("%Y-%m-%d_%H%M%S")
+    safe_label = _sanitize_backup_label(label)
+    base_name = f"{timestamp}_{drive_id}" + (f"_{safe_label}" if safe_label else "")
+    backup_dir = BACKUPS_DIR / base_name
+    suffix = 2
+    while backup_dir.exists():
+        backup_dir = BACKUPS_DIR / f"{base_name}_{suffix}"
+        suffix += 1
+    backup_dir.mkdir(parents=True)
+
+    items_backed_up = []
+    for entry in sorted(target_root.iterdir()):
+        if entry.name.lower() in _BACKUP_EXCLUDE_NAMES:
+            continue
+        log(f"Backing up {entry.name}...")
+        dest = backup_dir / entry.name
+        if entry.is_dir():
+            shutil.copytree(entry, dest)
+        else:
+            shutil.copy2(entry, dest)
+        items_backed_up.append(entry.name)
+        log(f"Backed up {entry.name}")
+
+    if not items_backed_up:
+        shutil.rmtree(backup_dir)
+        return None
+
+    created = time.strftime("%Y-%m-%dT%H:%M:%S")
+    meta = {"created": created, "drive_id": drive_id, "label": label.strip(), "items": items_backed_up}
+    (backup_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+    return BackupInfo(path=backup_dir, created=created, drive_id=drive_id, label=label.strip(), items=items_backed_up)
+
+
+def list_backups() -> list[BackupInfo]:
+    """Returns every backup under BACKUPS_DIR, newest first."""
+    if not BACKUPS_DIR.is_dir():
+        return []
+    results = []
+    for entry in BACKUPS_DIR.iterdir():
+        if not entry.is_dir():
+            continue
+        meta_path = entry / "meta.json"
+        info = None
+        if meta_path.is_file():
+            try:
+                meta = json.loads(meta_path.read_text())
+                info = BackupInfo(
+                    path=entry, created=meta.get("created", ""),
+                    drive_id=meta.get("drive_id", ""), label=meta.get("label", ""),
+                    items=meta.get("items", []),
+                )
+            except Exception:
+                info = None
+        if info is None:
+            # No/corrupt meta.json - fall back to whatever's actually in
+            # the backup folder rather than hiding the backup entirely.
+            items = [p.name for p in entry.iterdir() if p.name != "meta.json"]
+            if items:
+                info = BackupInfo(path=entry, created="", drive_id="", label="", items=items)
+        if info is not None:
+            results.append(info)
+    results.sort(key=lambda b: b.created or b.path.name, reverse=True)
+    return results
+
+
+def find_latest_backup_for_drive(drive_id: str, required_items: list[str]) -> "BackupInfo | None":
+    """Most recent backup tagged with drive_id that contains every name
+    in required_items, or None. Used by the Update tab's one-click
+    "Restore Last Backup" to find what to offer without the user having
+    to pick from a list."""
+    for backup in list_backups():
+        if backup.drive_id == drive_id and all(i in backup.items for i in required_items):
+            return backup
+    return None
+
+
+def restore_backup(backup: BackupInfo, items: list[str], target_root: Path, log=lambda msg: None) -> None:
+    """Copies the given top-level names (folders or files) from a backup
+    back onto target_root, fully replacing whatever's currently there
+    for each one - mirrors apply_update()'s own delete-then-copy
+    semantics, so a restore behaves the same way an update does rather
+    than merging file-by-file."""
+    for name in items:
+        src = backup.path / name
+        if not src.exists():
+            log(f"WARNING: backup has no {name}, skipping")
+            continue
+        dst = target_root / name
+        if dst.is_dir():
+            log(f"Removing existing {name}...")
+            shutil.rmtree(dst)
+        elif dst.exists():
+            dst.unlink()
+        log(f"Restoring {name}...")
+        if src.is_dir():
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
+        log(f"Restored {name}")
+
+
 def apply_update(
     extract_dir: Path,
     selected_codes: list[str],
@@ -730,7 +908,10 @@ def apply_update(
     progress=lambda done, total: None,
 ) -> None:
     """Deletes LANG+KPCONF on target and copies the new ones over,
-    filtering LANG down to the selected languages + Fonts.ums.
+    filtering LANG down to the selected languages + Fonts.ums. If
+    make_backup, snapshots the entire keypad (LANG/KPCONF/DRVCONF/PRTSCR,
+    whichever exist) via take_backup() first - see that function for why
+    it covers more than just the folders being replaced.
 
     Logs a timing breakdown for each step (backup / delete / copy) since
     on some systems - especially Windows with removable drives set to
@@ -763,11 +944,6 @@ def apply_update(
     dst_lang = target_root / "LANG"
     dst_kpconf = target_root / "KPCONF"
 
-    backup_targets = [
-        (existing, label)
-        for existing, label in ((dst_lang, "LANG"), (dst_kpconf, "KPCONF"))
-        if make_backup and existing.is_dir()
-    ]
     delete_targets = [existing for existing in (dst_lang, dst_kpconf) if existing.is_dir()]
     fonts_src = src_lang / "Fonts.ums"
     lang_files = [
@@ -776,7 +952,7 @@ def apply_update(
         if (src_lang / f"{code}_labels.ums").exists()
     ]
     total_steps = (
-        len(backup_targets) + len(delete_targets)
+        (1 if make_backup else 0) + len(delete_targets)
         + (1 if fonts_src.exists() else 0) + len(lang_files) + 1  # +1 for KPCONF folder copy
     )
     done_steps = 0
@@ -790,16 +966,9 @@ def apply_update(
         progress(done_steps, total_steps)
         log(f"  ({label} took {time.perf_counter() - t0:.1f}s)")
 
-    if backup_targets:
-        backup_root = APP_DIR / "backups" / target_root.name
-        backup_root.mkdir(parents=True, exist_ok=True)
-        for existing, label in backup_targets:
-            backup_dest = backup_root / label
-            if backup_dest.exists():
-                shutil.rmtree(backup_dest)
-            log(f"Backing up existing {label}...")
-            timed_step(f"backup {label}", lambda e=existing, b=backup_dest: shutil.copytree(e, b))
-            log(f"Backed up existing {label} to {backup_dest}")
+    if make_backup:
+        log("Backing up entire keypad before making changes...")
+        timed_step("full backup", lambda: take_backup(target_root, label="before update", log=log))
 
     for existing in delete_targets:
         log(f"Removing existing {existing}...")
@@ -985,6 +1154,43 @@ class EjectThread(QThread):
     def run(self):
         try:
             eject_drive(self.target_root, log=self.log_msg.emit)
+            self.finished_ok.emit()
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
+class BackupThread(QThread):
+    log_msg = Signal(str)
+    finished_ok = Signal(object)  # BackupInfo, or None if there was nothing to back up
+    failed = Signal(str)
+
+    def __init__(self, target_root: Path, label: str):
+        super().__init__()
+        self.target_root = target_root
+        self.label = label
+
+    def run(self):
+        try:
+            info = take_backup(self.target_root, self.label, log=self.log_msg.emit)
+            self.finished_ok.emit(info)
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
+class RestoreThread(QThread):
+    log_msg = Signal(str)
+    finished_ok = Signal()
+    failed = Signal(str)
+
+    def __init__(self, backup: BackupInfo, items: list[str], target_root: Path):
+        super().__init__()
+        self.backup = backup
+        self.items = items
+        self.target_root = target_root
+
+    def run(self):
+        try:
+            restore_backup(self.backup, self.items, self.target_root, log=self.log_msg.emit)
             self.finished_ok.emit()
         except Exception as e:
             self.failed.emit(str(e))
@@ -1360,6 +1566,245 @@ class KeypadImportSection(QWidget):
             )
 
 
+class BackupRestoreTab(QWidget):
+    """Full backup history for the connected keypad, independent of the
+    Update tab's own automatic pre-update backup. Lets you snapshot the
+    entire keypad drive on demand, browse every backup ever taken (each
+    kept in its own folder - see take_backup()), and restore a chosen
+    subset of what's in a chosen backup. This is the "just in case
+    something goes badly wrong" net; the Update tab's "Restore Last
+    Backup" button covers the common "undo my last update" case without
+    needing this tab at all.
+    """
+
+    def __init__(self, set_busy):
+        super().__init__()
+        self.set_busy = set_busy
+        self.target_root: Path | None = None
+        self.selected_backup: BackupInfo | None = None
+
+        layout = QVBoxLayout(self)
+
+        # --- Take a backup now ---
+        backup_group = QGroupBox("Take a full backup now")
+        backup_layout = QVBoxLayout(backup_group)
+
+        target_row = QHBoxLayout()
+        self.target_label = QLabel("")
+        self.target_label.setWordWrap(True)
+        self.refresh_target_btn = QPushButton("Refresh")
+        self.refresh_target_btn.clicked.connect(self.refresh_target)
+        target_row.addWidget(self.target_label, stretch=1)
+        target_row.addWidget(self.refresh_target_btn)
+        backup_layout.addLayout(target_row)
+
+        label_row = QHBoxLayout()
+        label_row.addWidget(QLabel("Label (optional):"))
+        self.label_input = QLineEdit()
+        self.label_input.setPlaceholderText("e.g. before shop update")
+        label_row.addWidget(self.label_input, stretch=1)
+        backup_layout.addLayout(label_row)
+
+        self.backup_now_btn = QPushButton("Back Up Now (entire keypad)")
+        self.backup_now_btn.clicked.connect(self.on_backup_now)
+        backup_layout.addWidget(self.backup_now_btn)
+        layout.addWidget(backup_group)
+
+        # --- Existing backups ---
+        list_group = QGroupBox("Existing backups")
+        list_layout = QVBoxLayout(list_group)
+        self.backup_list = QListWidget()
+        self.backup_list.itemSelectionChanged.connect(self.on_backup_selection_changed)
+        list_layout.addWidget(self.backup_list)
+
+        list_btn_row = QHBoxLayout()
+        self.refresh_backups_btn = QPushButton("Refresh List")
+        self.refresh_backups_btn.clicked.connect(self.refresh_backup_list)
+        list_btn_row.addWidget(self.refresh_backups_btn)
+        self.delete_backup_btn = QPushButton("Delete Selected Backup")
+        self.delete_backup_btn.setEnabled(False)
+        self.delete_backup_btn.clicked.connect(self.on_delete_backup)
+        self.delete_backup_btn.setStyleSheet("""
+            QPushButton { background-color: #c0392b; color: white; }
+            QPushButton:hover:!disabled { background-color: #e74c3c; }
+            QPushButton:pressed:!disabled { background-color: #a93226; }
+            QPushButton:disabled { background-color: #7f8c8d; color: #dddddd; }
+        """)
+        list_btn_row.addWidget(self.delete_backup_btn)
+        list_layout.addLayout(list_btn_row)
+        layout.addWidget(list_group)
+
+        # --- Restore from selected backup ---
+        restore_group = QGroupBox("Restore from selected backup")
+        restore_layout = QVBoxLayout(restore_group)
+        self.no_selection_label = QLabel("Select a backup above to choose what to restore.")
+        restore_layout.addWidget(self.no_selection_label)
+        # Populated dynamically per selected backup (on_backup_selection_changed)
+        # rather than a fixed set - a backup can contain anything that was
+        # actually on the keypad's drive root at the time, not just the
+        # folders this app happens to recognize.
+        self.item_checks: dict[str, QCheckBox] = {}
+        self.checks_layout = QVBoxLayout()
+        restore_layout.addLayout(self.checks_layout)
+        self.restore_btn = QPushButton("Restore Checked Items to Connected Keypad")
+        self.restore_btn.setEnabled(False)
+        self.restore_btn.clicked.connect(self.on_restore)
+        restore_layout.addWidget(self.restore_btn)
+        layout.addWidget(restore_group)
+
+        layout.addStretch(1)
+
+        self.refresh_target()
+        self.refresh_backup_list()
+
+    # -- helpers ----------------------------------------------------------
+
+    def refresh_target(self):
+        self.target_root = find_connected_keypad_root()
+        if self.target_root is None:
+            self.target_label.setText("No keypad detected - connect it first")
+        else:
+            self.target_label.setText(str(self.target_root))
+        self._update_buttons_enabled()
+
+    def refresh_backup_list(self):
+        self.backup_list.blockSignals(True)
+        self.backup_list.clear()
+        self.backups_by_path: dict[str, BackupInfo] = {}
+        backups = list_backups()
+        if not backups:
+            item = QListWidgetItem("No backups yet")
+            item.setFlags(Qt.NoItemFlags)
+            self.backup_list.addItem(item)
+        else:
+            for b in backups:
+                item = QListWidgetItem(describe_backup(b))
+                item.setData(Qt.UserRole, str(b.path))
+                self.backups_by_path[str(b.path)] = b
+                self.backup_list.addItem(item)
+        self.backup_list.blockSignals(False)
+        self.selected_backup = None
+        self._rebuild_item_checks()
+        self._update_buttons_enabled()
+
+    def on_backup_selection_changed(self):
+        selected = self.backup_list.selectedItems()
+        path_str = selected[0].data(Qt.UserRole) if selected else None
+        self.selected_backup = self.backups_by_path.get(path_str) if path_str else None
+        self._rebuild_item_checks()
+        self._update_buttons_enabled()
+
+    def _rebuild_item_checks(self):
+        while self.checks_layout.count():
+            child = self.checks_layout.takeAt(0)
+            widget = child.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self.item_checks = {}
+        if self.selected_backup is None:
+            self.no_selection_label.setVisible(True)
+            return
+        self.no_selection_label.setVisible(False)
+        for name in self.selected_backup.items:
+            cb = QCheckBox(name)
+            cb.setChecked(True)
+            cb.toggled.connect(self._update_buttons_enabled)
+            self.checks_layout.addWidget(cb)
+            self.item_checks[name] = cb
+
+    def _update_buttons_enabled(self):
+        self.backup_now_btn.setEnabled(self.target_root is not None)
+        self.delete_backup_btn.setEnabled(self.selected_backup is not None)
+        any_checked = any(cb.isChecked() for cb in self.item_checks.values())
+        self.restore_btn.setEnabled(
+            self.selected_backup is not None and self.target_root is not None and any_checked
+        )
+
+    # -- backup -------------------------------------------------------------
+
+    def on_backup_now(self):
+        if self.target_root is None:
+            return
+        self.backup_now_btn.setEnabled(False)
+        self.set_busy("backing up the keypad")
+        self.backup_thread = BackupThread(self.target_root, self.label_input.text())
+        self.backup_thread.log_msg.connect(lambda _msg: None)
+        self.backup_thread.finished_ok.connect(self.on_backup_ok)
+        self.backup_thread.failed.connect(self.on_backup_failed)
+        self.backup_thread.start()
+
+    def on_backup_ok(self, info: "BackupInfo | None"):
+        self.backup_now_btn.setEnabled(True)
+        self.set_busy(None)
+        self.refresh_backup_list()
+        if info is None:
+            QMessageBox.information(
+                self, "Nothing to back up",
+                "The connected keypad's drive appears to be empty - nothing was backed up.",
+            )
+        else:
+            self.label_input.clear()
+            QMessageBox.information(self, "Backup complete", f"Backed up: {', '.join(info.items)}.")
+
+    def on_backup_failed(self, err: str):
+        self.backup_now_btn.setEnabled(True)
+        self.set_busy(None)
+        QMessageBox.critical(self, "Backup failed", err)
+
+    # -- delete ---------------------------------------------------------
+
+    def on_delete_backup(self):
+        if self.selected_backup is None:
+            return
+        resp = QMessageBox.warning(
+            self, "Confirm delete",
+            f"Permanently delete this backup?\n\n{describe_backup(self.selected_backup)}\n\n"
+            "This cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if resp != QMessageBox.Yes:
+            return
+        shutil.rmtree(self.selected_backup.path, ignore_errors=True)
+        self.refresh_backup_list()
+
+    # -- restore ----------------------------------------------------------
+
+    def on_restore(self):
+        if self.selected_backup is None or self.target_root is None:
+            return
+        items = [name for name, cb in self.item_checks.items() if cb.isChecked()]
+        if not items:
+            return
+        confirm = QMessageBox.warning(
+            self, "Confirm restore",
+            f"This will delete the current {', '.join(items)} on\n{self.target_root}\n"
+            f"and replace them with this backup:\n\n{describe_backup(self.selected_backup)}"
+            "\n\nThis cannot be undone. Continue?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        self.restore_btn.setEnabled(False)
+        self.set_busy("restoring a backup to the keypad")
+        self.restore_thread = RestoreThread(self.selected_backup, items, self.target_root)
+        self.restore_thread.log_msg.connect(lambda _msg: None)
+        self.restore_thread.finished_ok.connect(self.on_restore_ok)
+        self.restore_thread.failed.connect(self.on_restore_failed)
+        self.restore_thread.start()
+
+    def on_restore_ok(self):
+        self.set_busy(None)
+        self._update_buttons_enabled()
+        QMessageBox.information(self, "Restore complete", "The selected items were restored.")
+
+    def on_restore_failed(self, err: str):
+        self.set_busy(None)
+        self._update_buttons_enabled()
+        QMessageBox.critical(self, "Restore failed", err)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1478,7 +1923,7 @@ class MainWindow(QMainWindow):
         # --- Apply group ---
         apply_box = QGroupBox("4. Apply")
         apply_layout = QVBoxLayout(apply_box)
-        self.backup_checkbox = QCheckBox("Back up existing LANG/KPCONF before replacing")
+        self.backup_checkbox = QCheckBox("Back up entire keypad before updating (LANG/KPCONF/DRVCONF/PRTSCR)")
         self.backup_checkbox.setChecked(True)
         apply_layout.addWidget(self.backup_checkbox)
         self.auto_eject_checkbox = QCheckBox("Automatically eject after updating")
@@ -1494,6 +1939,14 @@ class MainWindow(QMainWindow):
         self.eject_btn.setVisible(False)
         self.eject_btn.clicked.connect(self.on_eject_clicked)
         apply_layout.addWidget(self.eject_btn)
+        # Undoes exactly what "Apply Update" just changed (LANG/KPCONF
+        # only) using the most recent backup for this drive - the Backup
+        # & Restore tab covers everything else (DRVCONF/PRTSCR, older
+        # backups, picking specific folders).
+        self.restore_last_btn = QPushButton("Restore Last Backup (undo update)")
+        self.restore_last_btn.setEnabled(False)
+        self.restore_last_btn.clicked.connect(self.on_restore_last_clicked)
+        apply_layout.addWidget(self.restore_last_btn)
         layout.addWidget(apply_box)
 
         # --- Log ---
@@ -1524,6 +1977,8 @@ class MainWindow(QMainWindow):
             "Export Screenshots",
         )
 
+        tabs.addTab(BackupRestoreTab(self._set_keypad_busy), "Backup && Restore")
+
         help_tab = QWidget()
         help_layout = QVBoxLayout(help_tab)
         help_layout.addWidget(QLabel(f"Version: {APP_VERSION}"))
@@ -1552,6 +2007,11 @@ class MainWindow(QMainWindow):
 
     def log(self, msg: str):
         self.log_view.append(msg)
+
+    def _set_keypad_busy(self, reason: str | None):
+        # Passed into BackupRestoreTab so its own backup/restore actions
+        # gate self-update the same way Apply/Eject on this tab already do.
+        self.keypad_busy_reason = reason
 
     def _local_version_text(self) -> str:
         if self.state.installed_version:
@@ -1600,6 +2060,7 @@ class MainWindow(QMainWindow):
             and 0 < n <= MAX_LANGUAGES
         )
         self.apply_btn.setEnabled(ok)
+        self.restore_last_btn.setEnabled(self.target_dir is not None)
 
     # -- slots ------------------------------------------------------------
 
@@ -1658,14 +2119,26 @@ class MainWindow(QMainWindow):
             self.check_update_btn.setText("Check for Updates")
             status = result.get("status")
             if status == "update_available":
-                resp = QMessageBox.question(
-                    self, "Update available",
-                    f"A new version ({result['latest_version']}) is available "
-                    f"(you have {APP_VERSION}).\n\nDownload and install it now?",
-                    QMessageBox.Yes | QMessageBox.No,
-                )
-                if resp == QMessageBox.Yes:
-                    self.start_self_update(result)
+                if APP_VERSION == "dev":
+                    # A dev checkout (no VERSION.txt) always parses as
+                    # version 0, so this branch fires on every real
+                    # release - confirming the check itself still works
+                    # without offering to actually self-update, which
+                    # would git-pull/restart a working dev checkout.
+                    QMessageBox.information(
+                        self, "Update available (dev build)",
+                        f"A new version ({result['latest_version']}) is "
+                        "available - auto-update is skipped on dev builds.",
+                    )
+                else:
+                    resp = QMessageBox.question(
+                        self, "Update available",
+                        f"A new version ({result['latest_version']}) is available "
+                        f"(you have {APP_VERSION}).\n\nDownload and install it now?",
+                        QMessageBox.Yes | QMessageBox.No,
+                    )
+                    if resp == QMessageBox.Yes:
+                        self.start_self_update(result)
             elif status == "up_to_date":
                 QMessageBox.information(
                     self, "Up to date",
@@ -1927,6 +2400,49 @@ class MainWindow(QMainWindow):
         self.keypad_busy_reason = None
         self.log(f"ERROR ejecting drive: {err}")
         QMessageBox.critical(self, "Eject failed", err)
+
+    def on_restore_last_clicked(self):
+        if not self.target_dir:
+            return
+        drive_id = _drive_identifier(self.target_dir)
+        backup = find_latest_backup_for_drive(drive_id, ["LANG", "KPCONF"])
+        if backup is None:
+            QMessageBox.information(
+                self, "No backup found",
+                "No backup containing LANG/KPCONF was found for this drive yet - "
+                "backups are only made when 'Back up entire keypad' is checked "
+                "during an update, or from the Backup & Restore tab.",
+            )
+            return
+        confirm = QMessageBox.warning(
+            self, "Confirm restore",
+            f"This will delete the current LANG and KPCONF folders on\n{self.target_dir}\n"
+            f"and replace them with this backup:\n\n{describe_backup(backup)}"
+            "\n\nContinue?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        self.restore_last_btn.setEnabled(False)
+        self.keypad_busy_reason = "restoring a backup to the keypad"
+        self.log(f"Restoring LANG/KPCONF from backup: {describe_backup(backup)}")
+        self.restore_last_thread = RestoreThread(backup, ["LANG", "KPCONF"], self.target_dir)
+        self.restore_last_thread.log_msg.connect(self.log)
+        self.restore_last_thread.finished_ok.connect(self.on_restore_last_ok)
+        self.restore_last_thread.failed.connect(self.on_restore_last_failed)
+        self.restore_last_thread.start()
+
+    def on_restore_last_ok(self):
+        self.keypad_busy_reason = None
+        self.update_apply_enabled()
+        QMessageBox.information(self, "Restore complete", "LANG and KPCONF were restored from backup.")
+
+    def on_restore_last_failed(self, err: str):
+        self.keypad_busy_reason = None
+        self.update_apply_enabled()
+        self.log(f"ERROR restoring backup: {err}")
+        QMessageBox.critical(self, "Restore failed", err)
 
 
 def main():

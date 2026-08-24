@@ -25,9 +25,13 @@ configuration files and screenshots saved on the keypad.
    automatically. Hit "Refresh Detected Drives" if you plugged it in
    after opening the app, or "Browse Manually..." if auto-detection
    misses it.
-4. **Apply Update** - back up existing files first (on by default).
-   Once done, click "Eject Drive" (or check "Automatically eject
-   after updating" beforehand) before unplugging.
+4. **Apply Update** - with "Back up entire keypad before updating"
+   checked (on by default), it snapshots the entire keypad drive before
+   making any changes. Once done, click "Eject Drive" (or check
+   "Automatically eject after updating" beforehand) before unplugging.
+   If something goes wrong, "Restore Last Backup (undo update)" puts
+   `LANG`/`KPCONF` back the way they were, from the most recent backup
+   for that drive.
 
 Note: the keypad's other settings (e.g. wheel sensitivity) get reset
 by Schneider's own update process after a language change - you may
@@ -48,6 +52,24 @@ need to reconfigure those separately.
 Same as the Config Files tab's export side, for the keypad's `PRTSCR`
 folder - select, export, or delete. No import here, since uploading a
 screenshot back to the device isn't a real use case.
+
+## Backup & Restore tab
+
+A full safety net for the connected keypad, independent of the Update
+Keypad tab's own automatic backup - use it any time, not just before an
+update.
+
+- **Take a full backup now** - snapshots *everything* on the keypad's
+  drive (not just `LANG`/`KPCONF`/`DRVCONF`/`PRTSCR`, but anything else
+  found there too, minus common OS clutter like `Thumbs.db`) into its
+  own dated folder, with an optional label to help you tell backups
+  apart later. Nothing is ever overwritten - a full history builds up.
+- **Existing backups** - browse every backup taken, and delete old ones
+  you no longer need (with confirmation).
+- **Restore from selected backup** - pick a backup, check which items
+  you want back, and restore them onto the connected keypad. This
+  replaces each selected folder entirely, so double-check you've got
+  the right backup before confirming.
 
 ## Things to know
 
