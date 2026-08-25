@@ -43,6 +43,7 @@ import time
 import webbrowser
 import zipfile
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
@@ -205,6 +206,13 @@ class LocalState:
     config_export_dir: str = ""
     screenshot_export_dir: str = ""
     config_import_browse_dir: str = ""
+    # ISO timestamp of the last successful (launch-time, automatic)
+    # language-pack version check - throttles that check to once a day
+    # since it requires launching headless Chromium, unlike the app
+    # update check which is a cheap plain HTTP GET. Left blank on
+    # failure so the next launch retries rather than waiting out the
+    # day on e.g. a transient network error.
+    last_lang_check: str = ""
 
     @classmethod
     def load(cls) -> "LocalState":
@@ -475,6 +483,78 @@ SE_HOMEPAGE = "https://www.se.com/us/en/"
 # pass. Playwright is a genuine Chromium instance, so it does.
 
 
+def _scrape_remote_package_info(page, log=lambda msg: None) -> RemotePackageInfo:
+    """Loads the Schneider download page in an already-open Playwright
+    page and scrapes the current version/filename/download URL out of
+    it, without downloading anything. Shared by fetch_and_download_via_
+    browser (which downloads after this) and check_remote_language_
+    version (which doesn't - used for the launch-time auto-check)."""
+    log("Loading Schneider download page in headless browser...")
+    # NOTE: wait_until="networkidle" reliably times out on this page -
+    # se.com keeps background requests (analytics/chat widgets, etc.)
+    # going indefinitely, so the network never actually goes idle.
+    # "domcontentloaded" is enough since we only need the static HTML
+    # containing the version/filename text, not any late-loading
+    # widgets. We then poll for the text itself (with a generous
+    # timeout) since it may still render slightly after DOMContentLoaded.
+    page.goto(SE_DOWNLOAD_PAGE, wait_until="domcontentloaded", timeout=60000)
+
+    # Rather than guessing the download URL's domain/query params
+    # ourselves (Schneider has changed both before - the domain moved
+    # from download.schneider-electric.com to download.se.com, and
+    # p_enDocType's value has changed too), scrape the actual download
+    # link straight out of the page. It's the file name (which embeds
+    # the version, e.g. "..._U1.78.zip") that we actually need;
+    # everything else about the URL is just whatever Schneider
+    # currently uses to serve it.
+    link_match = None
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        html = page.content()
+        link_match = re.search(
+            r'https://download\.se\.com/files\?[^"\'<>\s]+', html
+        )
+        if link_match:
+            break
+        page.wait_for_timeout(500)
+
+    if not link_match:
+        raise RuntimeError(
+            "Could not find the download link on the Schneider "
+            "download page - the page layout may have changed. "
+            f"Check {SE_DOWNLOAD_PAGE} manually."
+        )
+    download_url = unescape(link_match.group(0))
+    query = parse_qs(urlparse(download_url).query)
+    zip_filename = query.get("p_File_Name", [None])[0]
+    if not zip_filename:
+        raise RuntimeError(
+            "Found a download link but it has no p_File_Name "
+            "parameter - the page layout may have changed. Check "
+            f"{SE_DOWNLOAD_PAGE} manually."
+        )
+    version = parse_version_from_filename(zip_filename)
+    if version == "unknown":
+        raise RuntimeError(
+            f"Found download link for '{zip_filename}' but "
+            "couldn't parse a version number out of it - the "
+            "naming convention may have changed. Check "
+            f"{SE_DOWNLOAD_PAGE} manually."
+        )
+    return RemotePackageInfo(version=version, zip_filename=zip_filename, download_url=download_url)
+
+
+def _launch_headless_chromium(p):
+    try:
+        return p.chromium.launch(headless=True)
+    except Exception as e:
+        raise RuntimeError(
+            "Couldn't launch the headless Chromium browser. If this "
+            "is the first run, you likely need: playwright install "
+            f"chromium\n\nOriginal error: {e}"
+        ) from e
+
+
 def fetch_and_download_via_browser(dest_dir: Path, log=lambda msg: None) -> tuple[str, Path]:
     """Loads the Schneider download page and fetches the zip using a
     real headless browser (Playwright/Chromium), returning
@@ -496,79 +576,20 @@ def fetch_and_download_via_browser(dest_dir: Path, log=lambda msg: None) -> tupl
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
-        try:
-            browser = p.chromium.launch(headless=True)
-        except Exception as e:
-            raise RuntimeError(
-                "Couldn't launch the headless Chromium browser. If this "
-                "is the first run, you likely need: playwright install "
-                f"chromium\n\nOriginal error: {e}"
-            ) from e
-
+        browser = _launch_headless_chromium(p)
         try:
             page = browser.new_page()
-            log("Loading Schneider download page in headless browser...")
-            # NOTE: wait_until="networkidle" reliably times out on this page -
-            # se.com keeps background requests (analytics/chat widgets, etc.)
-            # going indefinitely, so the network never actually goes idle.
-            # "domcontentloaded" is enough since we only need the static HTML
-            # containing the version/filename text, not any late-loading
-            # widgets. We then poll for the text itself (with a generous
-            # timeout) since it may still render slightly after DOMContentLoaded.
-            page.goto(SE_DOWNLOAD_PAGE, wait_until="domcontentloaded", timeout=60000)
+            info = _scrape_remote_package_info(page, log)
 
-            # Rather than guessing the download URL's domain/query params
-            # ourselves (Schneider has changed both before - the domain
-            # moved from download.schneider-electric.com to download.se.com,
-            # and p_enDocType's value has changed too), scrape the actual
-            # download link straight out of the page. It's the file name
-            # (which embeds the version, e.g. "..._U1.78.zip") that we
-            # actually need; everything else about the URL is just
-            # whatever Schneider currently uses to serve it.
-            link_match = None
-            deadline = time.time() + 30
-            while time.time() < deadline:
-                html = page.content()
-                link_match = re.search(
-                    r'https://download\.se\.com/files\?[^"\'<>\s]+', html
-                )
-                if link_match:
-                    break
-                page.wait_for_timeout(500)
-
-            if not link_match:
-                raise RuntimeError(
-                    "Could not find the download link on the Schneider "
-                    "download page - the page layout may have changed. "
-                    f"Check {SE_DOWNLOAD_PAGE} manually."
-                )
-            download_url = unescape(link_match.group(0))
-            query = parse_qs(urlparse(download_url).query)
-            zip_filename = query.get("p_File_Name", [None])[0]
-            if not zip_filename:
-                raise RuntimeError(
-                    "Found a download link but it has no p_File_Name "
-                    "parameter - the page layout may have changed. Check "
-                    f"{SE_DOWNLOAD_PAGE} manually."
-                )
-            version = parse_version_from_filename(zip_filename)
-            if version == "unknown":
-                raise RuntimeError(
-                    f"Found download link for '{zip_filename}' but "
-                    "couldn't parse a version number out of it - the "
-                    "naming convention may have changed. Check "
-                    f"{SE_DOWNLOAD_PAGE} manually."
-                )
-
-            dest_path = dest_dir / zip_filename
+            dest_path = dest_dir / info.zip_filename
             if dest_path.exists() and dest_path.stat().st_size > 0:
-                log(f"Already have {zip_filename} cached, skipping download.")
-                return version, dest_path
+                log(f"Already have {info.zip_filename} cached, skipping download.")
+                return info.version, dest_path
 
-            log(f"Found V{version} ({zip_filename}), downloading...")
+            log(f"Found V{info.version} ({info.zip_filename}), downloading...")
             with page.expect_download(timeout=60000) as download_info:
                 try:
-                    page.goto(download_url)
+                    page.goto(info.download_url)
                 except Exception:
                     # Navigating to a file that triggers a download always
                     # raises a navigation error in Playwright even on
@@ -578,7 +599,31 @@ def fetch_and_download_via_browser(dest_dir: Path, log=lambda msg: None) -> tupl
             download = download_info.value
             download.save_as(str(dest_path))
             log(f"Downloaded to {dest_path}")
-            return version, dest_path
+            return info.version, dest_path
+        finally:
+            browser.close()
+
+
+def check_remote_language_version(log=lambda msg: None) -> RemotePackageInfo:
+    """Launches headless Chromium just long enough to scrape the
+    current remote language-package version, without downloading
+    anything. Used for the throttled launch-time auto-check; callers
+    compare the result against LocalState.installed_version themselves
+    and can call fetch_and_download_via_browser afterward if the user
+    wants to actually download it."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:
+        raise RuntimeError(
+            "Playwright isn't installed. Run: pip install playwright  "
+            "then: playwright install chromium"
+        ) from e
+
+    with sync_playwright() as p:
+        browser = _launch_headless_chromium(p)
+        try:
+            page = browser.new_page()
+            return _scrape_remote_package_info(page, log)
         finally:
             browser.close()
 
@@ -1097,6 +1142,19 @@ class SelfUpdateThread(QThread):
         try:
             perform_self_update(self.update_result, log=self.log_msg.emit)
             self.finished_ok.emit()
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
+class LanguageCheckThread(QThread):
+    log_msg = Signal(str)
+    finished_ok = Signal(object)  # RemotePackageInfo
+    failed = Signal(str)
+
+    def run(self):
+        try:
+            info = check_remote_language_version(log=self.log_msg.emit)
+            self.finished_ok.emit(info)
         except Exception as e:
             self.failed.emit(str(e))
 
@@ -1836,6 +1894,17 @@ class MainWindow(QMainWindow):
         corner = QWidget()
         corner_layout = QHBoxLayout(corner)
         corner_layout.setContentsMargins(0, 0, 6, 0)
+        # Quick-access eject, independent of the Update tab's own "Eject
+        # Drive" button (which only appears right after an apply). Lives
+        # in the corner so it's reachable from every tab, not just Update
+        # Keypad. Enabled only when a drive is selected and nothing else
+        # is using it - see update_apply_enabled().
+        self.eject_top_btn = QPushButton("⏏")
+        self.eject_top_btn.setFixedSize(22, 22)
+        self.eject_top_btn.setToolTip("Safely Eject Keypad")
+        self.eject_top_btn.setEnabled(False)
+        self.eject_top_btn.clicked.connect(self.on_eject_clicked)
+        corner_layout.addWidget(self.eject_top_btn)
         self.check_update_btn = QPushButton("Check for Updates")
         self.check_update_btn.clicked.connect(self.on_check_updates_clicked)
         corner_layout.addWidget(self.check_update_btn)
@@ -2012,6 +2081,7 @@ class MainWindow(QMainWindow):
 
         self._populate_languages_from_cache()
         self.refresh_detected_drives()
+        self._auto_check_for_updates()
 
     # -- helpers --------------------------------------------------------
 
@@ -2022,6 +2092,7 @@ class MainWindow(QMainWindow):
         # Passed into BackupRestoreTab so its own backup/restore actions
         # gate self-update the same way Apply/Eject on this tab already do.
         self.keypad_busy_reason = reason
+        self.update_apply_enabled()
 
     def _local_version_text(self) -> str:
         if self.state.installed_version:
@@ -2064,13 +2135,16 @@ class MainWindow(QMainWindow):
 
     def update_apply_enabled(self):
         n = len(self.selected_codes())
+        not_busy = self.keypad_busy_reason is None
         ok = (
             self.extract_dir is not None
             and self.target_dir is not None
             and 0 < n <= MAX_LANGUAGES
+            and not_busy
         )
         self.apply_btn.setEnabled(ok)
-        self.restore_last_btn.setEnabled(self.target_dir is not None)
+        self.restore_last_btn.setEnabled(self.target_dir is not None and not_busy)
+        self.eject_top_btn.setEnabled(self.target_dir is not None and not_busy)
 
     # -- slots ------------------------------------------------------------
 
@@ -2094,6 +2168,14 @@ class MainWindow(QMainWindow):
         self.fetch_btn.setEnabled(True)
         if version == self.state.installed_version:
             self.log(f"Already have the latest version (V{version}) downloaded.")
+            resp = QMessageBox.question(
+                self, "Already up to date",
+                f"You already have the latest language pack (V{version}) "
+                "downloaded and installed.\n\nRe-download/re-extract it anyway?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if resp != QMessageBox.Yes:
+                return
         self._finalize_new_package(Path(zip_path), version)
 
     def on_fetch_failed(self, err: str):
@@ -2123,42 +2205,101 @@ class MainWindow(QMainWindow):
         self.check_update_btn.setEnabled(False)
         self.check_update_btn.setText("Checking...")
         self.update_check_thread = UpdateCheckThread()
+        self.update_check_thread.finished_ok.connect(self._handle_app_update_check_result)
+        self.update_check_thread.start()
 
-        def on_result(result: dict):
-            self.check_update_btn.setEnabled(True)
-            self.check_update_btn.setText("Check for Updates")
-            status = result.get("status")
-            if status == "update_available":
-                if APP_VERSION == "dev":
-                    # A dev checkout (no VERSION.txt) always parses as
-                    # version 0, so this branch fires on every real
-                    # release - confirming the check itself still works
-                    # without offering to actually self-update, which
-                    # would git-pull/restart a working dev checkout.
+    def _handle_app_update_check_result(self, result: dict, silent: bool = False):
+        # silent=True is the launch-time auto-check: still notify and ask
+        # when an update IS available (that's the whole point), but don't
+        # pop up ambient "you're up to date"/"check failed" noise on every
+        # startup the way the explicit "Check for Updates" button does.
+        self.check_update_btn.setEnabled(True)
+        self.check_update_btn.setText("Check for Updates")
+        status = result.get("status")
+        if status == "update_available":
+            if APP_VERSION == "dev":
+                # A dev checkout (no VERSION.txt) always parses as
+                # version 0, so this branch fires on every real
+                # release - confirming the check itself still works
+                # without offering to actually self-update, which
+                # would git-pull/restart a working dev checkout.
+                if not silent:
                     QMessageBox.information(
                         self, "Update available (dev build)",
                         f"A new version ({result['latest_version']}) is "
                         "available - auto-update is skipped on dev builds.",
                     )
-                else:
-                    resp = QMessageBox.question(
-                        self, "Update available",
-                        f"A new version ({result['latest_version']}) is available "
-                        f"(you have {APP_VERSION}).\n\nDownload and install it now?",
-                        QMessageBox.Yes | QMessageBox.No,
-                    )
-                    if resp == QMessageBox.Yes:
-                        self.start_self_update(result)
-            elif status == "up_to_date":
+            else:
+                resp = QMessageBox.question(
+                    self, "Update available",
+                    f"A new version ({result['latest_version']}) is available "
+                    f"(you have {APP_VERSION}).\n\nDownload and install it now?",
+                    QMessageBox.Yes | QMessageBox.No,
+                )
+                if resp == QMessageBox.Yes:
+                    self.start_self_update(result)
+        elif status == "up_to_date":
+            if not silent:
                 QMessageBox.information(
                     self, "Up to date",
                     f"You're on the latest version ({result['latest_version']}).",
                 )
+        else:
+            if silent:
+                self.log(f"Auto-check for app updates failed: {result.get('message', 'Unknown error')}")
             else:
                 QMessageBox.warning(self, "Check failed", result.get("message", "Unknown error"))
 
-        self.update_check_thread.finished_ok.connect(on_result)
-        self.update_check_thread.start()
+    def _auto_check_for_updates(self):
+        """Runs both update checks in the background on launch. The app
+        update check is a cheap plain HTTP GET, so it runs every time;
+        the language-pack check needs a real headless Chromium load (no
+        lightweight API for Schneider's site), so it's throttled to once
+        a day via LocalState.last_lang_check. Both are silent unless
+        something is actually available to install."""
+        self.auto_update_check_thread = UpdateCheckThread()
+        self.auto_update_check_thread.finished_ok.connect(
+            lambda result: self._handle_app_update_check_result(result, silent=True)
+        )
+        self.auto_update_check_thread.start()
+
+        if self._lang_check_due():
+            self.auto_lang_check_thread = LanguageCheckThread()
+            self.auto_lang_check_thread.log_msg.connect(self.log)
+            self.auto_lang_check_thread.finished_ok.connect(self._on_auto_lang_check_ok)
+            self.auto_lang_check_thread.failed.connect(self._on_auto_lang_check_failed)
+            self.auto_lang_check_thread.start()
+
+    def _lang_check_due(self) -> bool:
+        if not self.state.last_lang_check:
+            return True
+        try:
+            last = datetime.fromisoformat(self.state.last_lang_check)
+        except ValueError:
+            return True
+        return datetime.now() - last >= timedelta(days=1)
+
+    def _on_auto_lang_check_ok(self, info: RemotePackageInfo):
+        # Only stamp last_lang_check on success - if it failed (offline,
+        # Chromium not installed yet, etc.) leave it blank so the next
+        # launch retries instead of waiting out the rest of the day.
+        self.state.last_lang_check = datetime.now().isoformat()
+        self.state.save()
+        if _parse_version(info.version) <= _parse_version(self.state.installed_version):
+            self.log(f"Language pack is up to date (V{info.version}).")
+            return
+        have = f"V{self.state.installed_version}" if self.state.installed_version else "none yet"
+        resp = QMessageBox.question(
+            self, "Language pack update available",
+            f"A new language pack (V{info.version}) is available (you have {have}).\n\n"
+            "Download it now?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if resp == QMessageBox.Yes:
+            self.on_fetch_clicked()
+
+    def _on_auto_lang_check_failed(self, err: str):
+        self.log(f"Auto-check for language pack updates failed: {err}")
 
     def start_self_update(self, update_result: dict):
         # Re-checked here (not just in on_check_updates_clicked) since a
@@ -2342,7 +2483,6 @@ class MainWindow(QMainWindow):
         if confirm != QMessageBox.Yes:
             return
 
-        self.apply_btn.setEnabled(False)
         self.apply_progress_bar.setRange(0, 0)  # indeterminate until the thread reports the real step count
         self.apply_progress_bar.setValue(0)
         self.apply_progress_bar.setVisible(True)
@@ -2350,6 +2490,7 @@ class MainWindow(QMainWindow):
         self.log("Starting transfer - the app will stay responsive; "
                   "watch the log below for per-step timing.")
         self.keypad_busy_reason = "updating the keypad's language files"
+        self.update_apply_enabled()
         self.apply_thread = ApplyThread(
             self.extract_dir, codes, self.target_dir,
             self.backup_checkbox.isChecked(),
@@ -2367,13 +2508,16 @@ class MainWindow(QMainWindow):
 
     def on_apply_ok(self):
         self.apply_progress_bar.setVisible(False)
-        self.apply_btn.setEnabled(True)
         self.eject_btn.setVisible(True)
-        self.keypad_busy_reason = None
         if self.auto_eject_checkbox.isChecked():
+            # keypad_busy_reason stays set (on_eject_clicked immediately
+            # overwrites it with its own reason) so apply/restore can't be
+            # re-enabled in the gap before ejecting starts.
             self.log("Auto-eject enabled - ejecting now...")
             self.on_eject_clicked()
         else:
+            self.keypad_busy_reason = None
+            self.update_apply_enabled()
             QMessageBox.information(
                 self, "Done", "Language files updated. Click 'Eject Drive' "
                 "below, then reconnect the keypad to the drive."
@@ -2381,14 +2525,15 @@ class MainWindow(QMainWindow):
 
     def on_apply_failed(self, err: str):
         self.apply_progress_bar.setVisible(False)
-        self.apply_btn.setEnabled(True)
         self.keypad_busy_reason = None
+        self.update_apply_enabled()
         self.log(f"ERROR applying update: {err}")
         QMessageBox.critical(self, "Update failed", err)
 
     def on_eject_clicked(self):
         self.eject_btn.setEnabled(False)
         self.keypad_busy_reason = "ejecting the keypad drive"
+        self.update_apply_enabled()
         self.log(f"Ejecting {self.target_dir}...")
         self.eject_thread = EjectThread(self.target_dir)
         self.eject_thread.log_msg.connect(self.log)
@@ -2409,6 +2554,7 @@ class MainWindow(QMainWindow):
     def on_eject_failed(self, err: str):
         self.eject_btn.setEnabled(True)
         self.keypad_busy_reason = None
+        self.update_apply_enabled()
         self.log(f"ERROR ejecting drive: {err}")
         QMessageBox.critical(self, "Eject failed", err)
 
@@ -2435,8 +2581,8 @@ class MainWindow(QMainWindow):
         if confirm != QMessageBox.Yes:
             return
 
-        self.restore_last_btn.setEnabled(False)
         self.keypad_busy_reason = "restoring a backup to the keypad"
+        self.update_apply_enabled()
         self.log(f"Restoring LANG/KPCONF from backup: {describe_backup(backup)}")
         self.restore_last_thread = RestoreThread(backup, ["LANG", "KPCONF"], self.target_dir)
         self.restore_last_thread.log_msg.connect(self.log)
