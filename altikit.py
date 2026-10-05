@@ -181,7 +181,7 @@ class RemotePackageInfo:
 
 
 ZIP_FILENAME_RE = re.compile(
-    r"Languages_for_VW3A1111_Advanced_graphic_display_terminal_U"
+    r"Languages[_-]for[_-]VW3A1111[_-]Advanced[_-]graphic[_-]display[_-]terminal[_-]U"
     r"(\d+(?:\.\d+)*)(?:\s*\(\d+\))?(?:\.zip)?",
     re.IGNORECASE,
 )
@@ -2029,6 +2029,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(apply_box)
 
         # --- Log ---
+        self.show_log_checkbox = QCheckBox("Show Log")
+        self.show_log_checkbox.setChecked(True)
+        self.show_log_checkbox.toggled.connect(self._on_show_log_toggled)
+        layout.addWidget(self.show_log_checkbox)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         layout.addWidget(self.log_view, stretch=1)
@@ -2087,6 +2091,9 @@ class MainWindow(QMainWindow):
 
     def log(self, msg: str):
         self.log_view.append(msg)
+
+    def _on_show_log_toggled(self, checked: bool):
+        self.log_view.setVisible(checked)
 
     def _set_keypad_busy(self, reason: str | None):
         # Passed into BackupRestoreTab so its own backup/restore actions
